@@ -126,6 +126,10 @@ async def upload_site_surface(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/")
+async def read_root():
+        return {"message": "Welcome to the RUNOPT CORE API"}
 @app.post("/upload/building-info")
 async def upload_building_info(
     session_id: str = Form(...),
