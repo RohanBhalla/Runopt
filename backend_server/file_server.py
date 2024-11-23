@@ -10,24 +10,30 @@ import json
 import uuid
 import asyncio
 #uvicorn file_server:app --reload
+import sys
+import os
 
-from building_placement import (
+# Append the directory to sys.path
+sys.path.append('/backend_server')
+
+
+from .building_placement import (
     create_building_dataframe,
     calculate_optimum_cut_fill,
     create_cut_fill_dataframe,
     create_building,
 )
 
-from slope_stability import (
+from .slope_stability import (
     slope_stability_calculation,
 )
 
-from pipe_design import (
+from .pipe_design import (
     set_nodes,
     find_path,
 )
 
-from water_supply import (
+from .water_supply import (
     create_water_supply_df,
     call_water_function,
 )
