@@ -9,7 +9,7 @@ import json
 import uuid
 import asyncio
 
-from backend_server.building_placement import (
+from .building_placement import (
     create_building_dataframe,
     calculate_optimum_cut_fill,
     create_cut_fill_dataframe,
