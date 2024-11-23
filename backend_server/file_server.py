@@ -4,16 +4,32 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List
 import pandas as pd
+import numpy as np
 import io
 import json
 import uuid
 import asyncio
+#uvicorn file_server:app --reload
 
-from .building_placement import (
+from building_placement import (
     create_building_dataframe,
     calculate_optimum_cut_fill,
     create_cut_fill_dataframe,
     create_building,
+)
+
+from slope_stability import (
+    slope_stability_calculation,
+)
+
+from pipe_design import (
+    set_nodes,
+    find_path,
+)
+
+from water_supply import (
+    create_water_supply_df,
+    call_water_function,
 )
 
 app = FastAPI()
@@ -27,9 +43,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # In-memory storage for site surface data with asyncio.Lock for thread safety
 site_surface_storage = {}
 storage_lock = asyncio.Lock()
+
+class NodeSelection(BaseModel):
+    supply_node: tuple[int, int, int]  
+    use_nodes: list[tuple[int, int, int]] 
+
+class FlowRates(BaseModel):
+    flow_rates: list[float]
 
 # Define Pydantic model for building data
 class Building(BaseModel):
@@ -205,17 +229,22 @@ async def upload_slope_stability(file: UploadFile = File(...)):
             df = pd.read_excel(file_like)
         elif file.filename.endswith('.csv'):
             df = pd.read_csv(file_like)
+            print(df.head())
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type.")
 
-        # TODO: Implement slope stability processing logic
-        # Placeholder: returning the original DataFrame
-        processed_df = df  # Replace with actual processing logic
-
+        processed_df, plot_json = slope_stability_calculation(df)  # Replace with actual processing logic
+        processed_df = processed_df.to_dict(orient="records")
         # Convert the DataFrame to CSV response
-        return dataframe_to_csv_response(processed_df, "slope_stability_processed.csv")
+        #return dataframe_to_csv_response(processed_df, "slope_stability_processed.csv")
+        return {
+            "message": "Slope stability data processed successfully.",
+            "processed_data": processed_df,  # Optional
+            "plot": plot_json  # Plotly JSON
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/upload/water-supply")
 async def upload_water_supply(file: UploadFile = File(...)):
@@ -233,14 +262,38 @@ async def upload_water_supply(file: UploadFile = File(...)):
             df = pd.read_excel(file_like)
         elif file.filename.endswith('.csv'):
             df = pd.read_csv(file_like)
+            #print(df)
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type.")
 
         # TODO: Implement water supply processing logic
         # Placeholder: returning the original DataFrame
-        processed_df = df  # Replace with actual processing logic
-
+        #pipeWaterSupplyDF = df  # Replace with actual processing logic
+        unique_path_count = df["Path_ID"].nunique()
+        #print(unique_path_count)
+        create_water_supply_df(df)
         # Convert the DataFrame to CSV response
+        return {
+            "message": "Water supply information uploaded successfully.",
+            "unique_path_count": unique_path_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/upload/flow-rates")
+async def submit_flow_rates(selection: FlowRates):
+    """
+    Endpoint to process flow rates submitted from the second page.
+    """
+    try:
+        # Log the received flow rates
+        print("Received flow rates:", selection.flow_rates)
+
+        # Example: Perform backend logic (e.g., save to database, process)
+        if any(rate <= 0 for rate in selection.flow_rates):
+            raise HTTPException(status_code=400, detail="Flow rates must all be positive numbers.")
+        processed_df = call_water_function(selection.flow_rates)
+        
+        # Return a confirmation response
         return dataframe_to_csv_response(processed_df, "water_supply_processed.csv")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -255,20 +308,69 @@ async def upload_underground_3d_coordinates(file: UploadFile = File(...)):
         # Read the uploaded file into memory
         contents = await file.read()
         file_like = io.BytesIO(contents)
-
+        df = None
         # Read the uploaded file into a DataFrame
         if file.filename.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(file_like)
         elif file.filename.endswith('.csv'):
             df = pd.read_csv(file_like)
+            print(df.head())
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type.")
 
-        # TODO: Implement underground 3D coordinate system processing logic
-        # Placeholder: returning the original DataFrame
         processed_df = df  # Replace with actual processing logic
 
+        node_tuples = df[["X", "Y", "Z"]].apply(tuple, axis=1).tolist()
+        
         # Convert the DataFrame to CSV response
-        return dataframe_to_csv_response(processed_df, "underground_3d_coordinates_processed.csv")
+        #return dataframe_to_csv_response(processed_df, "underground_3d_coordinates_processed.csv")
+        # return {
+        #     "message": "File uploaded successfully",
+        #     "nodes": node_tuples
+        # }
+        return {
+            "message": "File uploaded successfully"
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/upload/select-nodes")
+async def select_nodes(selection: NodeSelection):
+    """
+    Endpoint to process user-selected supply node and use nodes.
+    Validates the input and returns the selections.
+    """
+    # Perform basic validation
+    try:
+        if not selection.supply_node:
+            raise HTTPException(status_code=400, detail="Supply node is missing or invalid.")
+        if not selection.use_nodes:
+            raise HTTPException(status_code=400, detail="Use nodes are missing or invalid.")
+        paths, price, fig_json = find_path(selection.supply_node, selection.use_nodes)
+
+        # if not os.path.exists(plot_file):
+        #     raise HTTPException(status_code=500, detail="Plot file not found.")
+
+        # # Return both the price and the plot file as separate objects
+        # return {
+        #     "message": "Nodes selected successfully",
+        #     "price": price,
+        #     "plot_file": f"/get-plot/{os.path.basename(plot_file)}"
+        # }
+        return {
+                "message": "Pipe design processed successfully.",
+                "total_price": price,
+                "plot": fig_json
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+# @app.get("/get-plot/{filename}")
+# def get_plot(filename: str):
+#     """
+#     Endpoint to serve the 3D plot image.
+#     """
+#     file_path = f"./{filename}"
+#     if not os.path.exists(file_path):
+#         raise HTTPException(status_code=404, detail="File not found.")
+#     return FileResponse(file_path, media_type="image/png", filename=filename)
