@@ -5,3 +5,4 @@ pydantic
 matplotlib
 plotly
 shapely
+python-multipart
