@@ -420,3 +420,7 @@ async def select_nodes(selection: NodeSelection):
 #     if not os.path.exists(file_path):
 #         raise HTTPException(status_code=404, detail="File not found.")
 #     return FileResponse(file_path, media_type="image/png", filename=filename)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
