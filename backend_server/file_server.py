@@ -9,7 +9,7 @@ import io
 import json
 import uuid
 import asyncio
-#uvicorn file_server:app --reload
+#uvicorn backend_server.file_server:app --reload
 import sys
 import os
 
@@ -81,6 +81,41 @@ def dataframe_to_csv_response(df: pd.DataFrame, filename: str):
     return response
 
 @app.post("/upload/site-surface")
+async def upload_site_surface(data: dict):
+    """
+    Endpoint to upload site surface data as a JSON payload.
+    Stores the data in temporary in-memory storage.
+    Returns a unique session ID for further processing.
+    """
+    try:
+        # Convert the JSON payload to a DataFrame
+        df = pd.DataFrame(data)
+
+        # Debug: Print DataFrame columns
+        print("Site Surface DataFrame Columns:", df.columns.tolist())
+
+        # Ensure column names are lowercase
+        df.columns = [col.lower() for col in df.columns]
+
+        # Debug: Print DataFrame columns after lowercasing
+        print("Site Surface DataFrame Columns (Lowercased):", df.columns.tolist())
+
+        # Generate a unique session ID using UUID4
+        session_id = str(uuid.uuid4())
+
+        # Store the DataFrame in the in-memory storage with thread safety
+        async with storage_lock:
+            site_surface_storage[session_id] = df
+
+        return {
+            "message": "Site surface uploaded successfully.",
+            "session_id": session_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/upload/site-surface-old")
 async def upload_site_surface(file: UploadFile = File(...)):
     """
     Endpoint to upload site surface Excel or CSV file.
@@ -130,6 +165,7 @@ async def upload_site_surface(file: UploadFile = File(...)):
 @app.get("/")
 async def read_root():
         return {"message": "Welcome to the RUNOPT CORE API"}
+
 @app.post("/upload/building-info")
 async def upload_building_info(
     session_id: str = Form(...),

@@ -341,7 +341,12 @@ def main():
     print(building)
 
     # Create a confined region
-    site_polygon = box(0, 0, 100, 100)  # Example site polygon
+    # site_polygon = box(0, 0, 100, 100)  # Example site polygon
+    min_x, max_x = df['X'].min(), df['X'].max()
+    min_y, max_y = df['Y'].min(), df['Y'].max()
+    # Create a site polygon using the bounds
+    site_polygon = box(min_x, min_y, max_x, max_y)
+
     confined_region = create_confined_region(site_polygon, percentage=50)
     print("\nConfined Region:")
     print(confined_region)
