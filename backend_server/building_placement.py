@@ -152,10 +152,13 @@ def extend_building_region(building_placement, extension_percentage):
 
 def find_points_in_extended_region(extended_region, surface_df):
     """
-    Find the points in NewSurfaceDF that are within the extended region.
+    Find the points in surface_df that are within the extended region.
     """
+    # Convert column names to lowercase for consistency
+    surface_df.columns = surface_df.columns.str.lower()
+    
     points_in_region = surface_df[
-        surface_df.apply(lambda row: Point(row['X'], row['Y']).within(extended_region), axis=1)
+        surface_df.apply(lambda row: Point(row['x'], row['y']).within(extended_region), axis=1)
     ]
     return points_in_region
 
@@ -167,12 +170,15 @@ def calculate_cut_fill_from_grid(relevant_points_df, proposed_elevation):
         print("No points found within the relevant area.")
         return None
 
-    # Calculate delta Z (difference between proposed and existing elevations)
-    delta_z = proposed_elevation - relevant_points_df['Z (Existing)']
+    # Ensure column names are lowercase
+    relevant_points_df.columns = relevant_points_df.columns.str.lower()
 
-    # Assume each point represents a small area (you can adjust this based on grid or surface area)
-    grid_cell_area = (relevant_points_df['X'].max() - relevant_points_df['X'].min()) * \
-                     (relevant_points_df['Y'].max() - relevant_points_df['Y'].min()) / len(relevant_points_df)
+    # Calculate delta Z (difference between proposed and existing elevations)
+    delta_z = proposed_elevation - relevant_points_df['z (existing)']
+
+    # Calculate grid cell area using lowercase column names
+    grid_cell_area = (relevant_points_df['x'].max() - relevant_points_df['x'].min()) * \
+                     (relevant_points_df['y'].max() - relevant_points_df['y'].min()) / len(relevant_points_df)
 
     # Calculate cut and fill volumes
     cut_volume = np.sum(np.maximum(0, -delta_z)) * grid_cell_area  # Cut (existing elevation > proposed)
@@ -187,6 +193,15 @@ def calculate_cut_fill_from_grid(relevant_points_df, proposed_elevation):
 
 
 def calculate_optimum_cut_fill(building_positions, surface_df, extension_percentage, z_min, z_max, z_step):
+    # Ensure column names are lowercase at the start
+    surface_df.columns = surface_df.columns.str.lower()
+    
+    # Use lowercase column name for z_min and z_max if not provided
+    if z_min is None:
+        z_min = surface_df['z (existing)'].min()
+    if z_max is None:
+        z_max = surface_df['z (existing)'].max()
+
     # Cost variables
     unclassified_excavation_cost = 143  # Cost per unit cut
     select_granular_fill = 144            # Cost per unit fill

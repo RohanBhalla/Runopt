@@ -118,7 +118,7 @@ def dataframe_to_csv_response(df: pd.DataFrame, filename: str):
 #         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/upload/site-surface-old")
+@app.post("/upload/site-surface")
 async def upload_site_surface(file: UploadFile = File(...)):
     """
     Endpoint to upload site surface Excel or CSV file.
