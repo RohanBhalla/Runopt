@@ -180,46 +180,39 @@ async def upload_building_info(
     Returns processed CSV.
     """
     try:
+        # Debug: Print received data
+        print(f"Session ID: {session_id}")
+        print(f"Buildings JSON: {buildings_json}")
+
         # Retrieve the site surface DataFrame from storage with thread safety
         async with storage_lock:
             df = site_surface_storage.get(session_id)
+            print(f"Retrieved DataFrame columns: {df.columns.tolist() if df is not None else 'None'}")
+            print(f"DataFrame head: {df.head() if df is not None else 'None'}")
 
         if df is None:
             raise HTTPException(status_code=400, detail="Invalid or expired session ID.")
 
-        # Ensure the required columns exist in the site surface data
-        required_columns = ['x', 'y', 'z (existing)']
-        if not all(col in df.columns for col in required_columns):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Missing required columns in site surface data. Required: {required_columns}. Found: {df.columns.tolist()}"
-            )
-
-        # Debug: Print session ID being used
-        print(f"Processing session ID: {session_id}")
+        # Ensure column names are lowercase and print before/after
+        print("Original columns:", df.columns.tolist())
+        df.columns = [col.lower() for col in df.columns]
+        print("Lowercase columns:", df.columns.tolist())
 
         # Parse buildings_json string into list of dicts
         try:
             buildings_data = json.loads(buildings_json)
-            if not isinstance(buildings_data, list):
-                raise ValueError("buildings_json must be a list of building objects.")
-        except (json.JSONDecodeError, ValueError) as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON for buildings_json: {e}")
+            print(f"Parsed buildings data: {buildings_data}")
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON format: {str(e)}")
 
-        # Validate buildings_data using Pydantic
+        # Create buildings DataFrame with explicit debugging
         try:
-            buildings = [Building(**b) for b in buildings_data]
+            buildings_df = create_building_dataframe(buildings_data)
+            print(f"Created buildings DataFrame columns: {buildings_df.columns.tolist()}")
+            print(f"Buildings DataFrame head: {buildings_df.head()}")
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid building data: {e}")
-
-        # Convert to list of dicts
-        buildings_data = [b.dict() for b in buildings]
-
-        # Debug: Print buildings data
-        print("Buildings Data:", buildings_data)
-
-        # Create a DataFrame from the JSON objects
-        buildings_df = create_building_dataframe(buildings_data)
+            print(f"Error in create_building_dataframe: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error creating buildings DataFrame: {str(e)}")
 
         # Debug: Print Building DataFrame columns
         print("Building DataFrame Columns:", buildings_df.columns.tolist())
