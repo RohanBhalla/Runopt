@@ -187,6 +187,14 @@ async def upload_building_info(
         if df is None:
             raise HTTPException(status_code=400, detail="Invalid or expired session ID.")
 
+        # Ensure the required columns exist in the site surface data
+        required_columns = ['x', 'y', 'z (existing)']
+        if not all(col in df.columns for col in required_columns):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Missing required columns in site surface data. Required: {required_columns}. Found: {df.columns.tolist()}"
+            )
+
         # Debug: Print session ID being used
         print(f"Processing session ID: {session_id}")
 
