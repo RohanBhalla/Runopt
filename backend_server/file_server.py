@@ -174,56 +174,21 @@ async def upload_building_info(
     session_id: str = Form(...),
     buildings_json: str = Form(...)
 ):
-    """
-    Endpoint to upload building information.
-    Performs processing using the site surface data associated with the session ID.
-    Returns processed CSV.
-    """
     try:
-        # Debug: Print received data
-        print(f"Session ID: {session_id}")
-        print(f"Buildings JSON: {buildings_json}")
-
-        # Retrieve the site surface DataFrame from storage with thread safety
+        # Retrieve the site surface DataFrame
         async with storage_lock:
             df = site_surface_storage.get(session_id)
-            print(f"Retrieved DataFrame columns: {df.columns.tolist() if df is not None else 'None'}")
-            print(f"DataFrame head: {df.head() if df is not None else 'None'}")
+            if df is None:
+                raise HTTPException(status_code=400, detail="Invalid or expired session ID.")
 
-        if df is None:
-            raise HTTPException(status_code=400, detail="Invalid or expired session ID.")
+        # Parse buildings data
+        buildings_data = json.loads(buildings_json)
+        
+        # Create buildings DataFrame (only with name, length, width)
+        buildings_df = pd.DataFrame(buildings_data)
+        print(f"Created buildings DataFrame: {buildings_df}")
 
-        # Ensure column names are lowercase and print before/after
-        print("Original columns:", df.columns.tolist())
-        df.columns = [col.lower() for col in df.columns]
-        print("Lowercase columns:", df.columns.tolist())
-
-        # Parse buildings_json string into list of dicts
-        try:
-            buildings_data = json.loads(buildings_json)
-            print(f"Parsed buildings data: {buildings_data}")
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON format: {str(e)}")
-
-        # Create buildings DataFrame with explicit debugging
-        try:
-            buildings_df = create_building_dataframe(buildings_data)
-            print(f"Created buildings DataFrame columns: {buildings_df.columns.tolist()}")
-            print(f"Buildings DataFrame head: {buildings_df.head()}")
-        except Exception as e:
-            print(f"Error in create_building_dataframe: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error creating buildings DataFrame: {str(e)}")
-
-        # Debug: Print Building DataFrame columns
-        print("Building DataFrame Columns:", buildings_df.columns.tolist())
-
-        # Ensure column names are lowercase
-        buildings_df.columns = [col.lower() for col in buildings_df.columns]
-
-        # Debug: Print Building DataFrame columns after lowercasing
-        print("Building DataFrame Columns (Lowercased):", buildings_df.columns.tolist())
-
-        # Add a Shapely object for each building
+        # Add Shapely object for each building
         buildings_df['building_shape'] = buildings_df.apply(
             lambda row: create_building(row['length'], row['width']), axis=1
         )
@@ -234,8 +199,6 @@ async def upload_building_info(
         z_min = df['z (existing)'].min()
         z_max = df['z (existing)'].max()
         z_step = 0.5
-        print("Z MIN:", z_min)
-        print("Z MAX:", z_max)
 
         optimum_results = calculate_optimum_cut_fill(
             building_positions=building_positions,
@@ -246,21 +209,12 @@ async def upload_building_info(
             z_step=z_step
         )
 
-        # Create a DataFrame from the results
+        # Create result DataFrame and return
         cut_fill_df = create_cut_fill_dataframe(optimum_results)
-
-        # Optionally, remove the session data after processing with thread safety
-        async with storage_lock:
-            del site_surface_storage[session_id]
-
-        # Convert the DataFrame to CSV response
         return dataframe_to_csv_response(cut_fill_df, "site_surface_processed.csv")
-    except HTTPException:
-        # Re-raise HTTPExceptions
-        raise
+
     except Exception as e:
-        # Log the exception for debugging
-        print(f"Error in /upload/building-info: {e}")
+        print(f"Error in building info processing: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload/slope-stability")
