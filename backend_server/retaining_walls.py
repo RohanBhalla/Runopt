@@ -340,6 +340,8 @@ def safety_check(OM, SP, OR, SR):
 # Main handler function to process retaining wall calculations
 def retaining_wall_handler(row, gamma, phi):
     """
+    Main handler function to process retaining wall calculations according to the flowchart.
+    
     Parameters:
     row: DataFrame row containing wall properties
     gamma: Unit weight of soil
@@ -348,71 +350,84 @@ def retaining_wall_handler(row, gamma, phi):
     Returns:
     dict: Dictionary containing all calculated values and safety factors
     """
-    # Step 1: Calculate Ka based on wall conditions
-    if row['Wall_Type'] == 'vertical':
-        Ka = rankine_active_ka(row['Beta'], phi)
-    else:
-        Ka = coulumb_active_ka(row['Alpha'], row['Beta'], phi, row['Delta'])
-    
-    # Step 2: Calculate basic soil pressures
+    # Initialize variables
     H = row['Height']
-    horizontal_stress = compute_horizontal_stress(gamma, H, Ka)
-    lateral_pressure = compute_lateral_pressure(gamma, H, Ka)
+    adjustment_factor = 0.9  # Factor to reduce height or ratio
+    max_iterations = 10
+    iteration = 0
     
-    # Step 3: Process surcharge based on type
-    surcharge_pressure = 0
-    z_value = H/2  # Default z value for rectangular surcharge
-    
-    if 'Surcharge_Type' in row:
-        if row['Surcharge_Type'] == 'rectangular':
-            surcharge_pressure = compute_rectangular_surcharge(
-                Ka, 
-                row['Surcharge_Load'], 
-                H
-            )
-        elif row['Surcharge_Type'] == 'line':
-            a = row['Distance_Ratio']  # horizontal distance / wall height
-            b = row['Depth_Ratio']     # depth / wall height
-            surcharge_pressure = compute_line_surcharge(
-                row['Line_Load'], 
-                H, 
-                a, 
-                b
-            )
-            z_value = calculate_z_bar(H, a)
-    
-    # Step 4: Calculate moments and pressures
-    OM, SP = calculate_om_sp(lateral_pressure, surcharge_pressure, H, z_value)
-    
-    # Step 5: Calculate resistances
-    # Note: You'll need to provide these values in the row or as additional parameters
-    SR = calculate_sliding_resistance(
-        row.get('y_concrete', 24),    # Default concrete unit weight
-        gamma,                        # Soil unit weight
-        H,                           # Wall height
-        row['Est_Thickness'],        # Stem thickness
-        row.get('Base_Height', H*0.1),  # Base height (typically 0.1*H)
-        row.get('Base_Width', H*0.5),   # Base width (typically 0.5*H)
-        row.get('Heel_Width', H*0.3),   # Heel width (typically 0.3*H)
-        row.get('Surcharge_Load', 0),    # Surcharge weight
-        row.get('Friction_Coefficient', np.tan(np.radians(phi)))  # Friction coefficient
-    )
-    
-    OR = calculate_overturning_resistance(
-        row.get('y_concrete', 24),    # Default concrete unit weight
-        gamma,                        # Soil unit weight
-        H,                           # Wall height
-        row['Est_Thickness'],        # Stem thickness
-        row.get('Base_Height', H*0.1),  # Base height
-        row.get('Base_Width', H*0.5),   # Base width
-        row.get('Heel_Width', H*0.3),   # Heel width
-        row.get('Toe_Length', H*0.2),   # Toe length
-        row.get('Toe_Width', H*0.2),    # Toe width
-        row.get('Surcharge_Load', 0)     # Surcharge weight
-    )
-    
-    # Step 6: Check safety factors
-    FS_overturning, FS_sliding = safety_check(OM, SP, OR, SR)
+    while iteration < max_iterations:
+        # Step 1: Calculate Ka based on wall conditions
+        if row['Wall_Type'] == 'vertical':
+            Ka = rankine_active_ka(row['Beta'], phi)
+        else:
+            Ka = coulumb_active_ka(row['Alpha'], row['Beta'], phi, row['Delta'])
+        
+        # Step 2: Calculate basic soil pressures
+        horizontal_stress = compute_horizontal_stress(gamma, H, Ka)
+        lateral_pressure = compute_lateral_pressure(gamma, H, Ka)
+        
+        # Step 3: Process surcharge based on type
+        surcharge_pressure = 0
+        z_value = H / 2  # Default z value for rectangular surcharge
+        
+        if 'Surcharge_Type' in row:
+            if row['Surcharge_Type'] == 'rectangular':
+                surcharge_pressure = compute_rectangular_surcharge(
+                    Ka, 
+                    row['Surcharge_Load'], 
+                    H
+                )
+            elif row['Surcharge_Type'] == 'line':
+                a = row['Distance_Ratio']  # horizontal distance / wall height
+                b = row['Depth_Ratio']     # depth / wall height
+                surcharge_pressure = compute_line_surcharge(
+                    row['Line_Load'], 
+                    H, 
+                    a, 
+                    b
+                )
+                z_value = calculate_z_bar(H, a)
+        
+        # Step 4: Calculate moments and pressures
+        OM, SP = calculate_om_sp(lateral_pressure, surcharge_pressure, H, z_value)
+        
+        # Step 5: Calculate resistances
+        SR = calculate_sliding_resistance(
+            row.get('y_concrete', 24),    # Default concrete unit weight
+            gamma,                        # Soil unit weight
+            H,                           # Wall height
+            row['Est_Thickness'],        # Stem thickness
+            row.get('Base_Height', H*0.1),  # Base height (typically 0.1*H)
+            row.get('Base_Width', H*0.5),   # Base width (typically 0.5*H)
+            row.get('Heel_Width', H*0.3),   # Heel width (typically 0.3*H)
+            row.get('Surcharge_Load', 0),    # Surcharge weight
+            row.get('Friction_Coefficient', np.tan(np.radians(phi)))  # Friction coefficient
+        )
+        
+        OR = calculate_overturning_resistance(
+            row.get('y_concrete', 24),    # Default concrete unit weight
+            gamma,                        # Soil unit weight
+            H,                           # Wall height
+            row['Est_Thickness'],        # Stem thickness
+            row.get('Base_Height', H*0.1),  # Base height
+            row.get('Base_Width', H*0.5),   # Base width
+            row.get('Heel_Width', H*0.3),   # Heel width
+            row.get('Toe_Length', H*0.2),   # Toe length
+            row.get('Toe_Width', H*0.2),    # Toe width
+            row.get('Surcharge_Load', 0)     # Surcharge weight
+        )
+        
+        # Step 6: Check safety factors
+        FS_overturning, FS_sliding = safety_check(OM, SP, OR, SR)
+        
+        # Check if safety factors are met
+        if FS_overturning >= 1.5 and FS_sliding >= 1.5:
+            break
+        
+        # Adjust height or ratio
+        H *= adjustment_factor
+        iteration += 1
     
     # Return all calculated values
     return {
@@ -427,7 +442,8 @@ def retaining_wall_handler(row, gamma, phi):
         'Safety_Factor_Overturning': FS_overturning,
         'Safety_Factor_Sliding': FS_sliding,
         'Is_Safe_Overturning': FS_overturning >= 1.5,
-        'Is_Safe_Sliding': FS_sliding >= 1.5
+        'Is_Safe_Sliding': FS_sliding >= 1.5,
+        'Iterations': iteration
     }
     
     

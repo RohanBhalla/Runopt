@@ -345,30 +345,44 @@ async def select_nodes(selection: NodeSelection):
     Endpoint to process user-selected supply node and use nodes.
     Validates the input and returns the selections.
     """
-    # Perform basic validation
     try:
-        if not selection.supply_node:
-            raise HTTPException(status_code=400, detail="Supply node is missing or invalid.")
-        if not selection.use_nodes:
-            raise HTTPException(status_code=400, detail="Use nodes are missing or invalid.")
-        paths, price, fig_json = find_path(selection.supply_node, selection.use_nodes)
+        print("Supply Node:", selection.supply_node)
+        print("Use Nodes:", selection.use_nodes)
+        
+        # Add more detailed validation
+        if not isinstance(selection.supply_node, tuple) or len(selection.supply_node) != 3:
+            raise HTTPException(status_code=400, detail="Invalid supply node format")
+        
+        if not selection.use_nodes or not all(isinstance(node, tuple) and len(node) == 3 for node in selection.use_nodes):
+            raise HTTPException(status_code=400, detail="Invalid use nodes format")
 
-        # if not os.path.exists(plot_file):
-        #     raise HTTPException(status_code=500, detail="Plot file not found.")
-
-        # # Return both the price and the plot file as separate objects
-        # return {
-        #     "message": "Nodes selected successfully",
-        #     "price": price,
-        #     "plot_file": f"/get-plot/{os.path.basename(plot_file)}"
-        # }
-        return {
+        # Add debug logging
+        print("Calling find_path with:")
+        print(f"Supply node: {selection.supply_node}")
+        print(f"Use nodes: {selection.use_nodes}")
+        
+        try:
+            paths, price, fig_json = find_path(selection.supply_node, selection.use_nodes)
+            
+            if not fig_json:
+                raise HTTPException(status_code=500, detail="Plot generation failed")
+                
+            return {
                 "message": "Pipe design processed successfully.",
                 "total_price": price,
-                "plot": fig_json
+                "plot": fig_json,
+                "paths": paths  # Optional: include paths if needed
             }
+            
+        except Exception as e:
+            print(f"Error in find_path: {str(e)}")  # Add debug logging
+            raise HTTPException(status_code=500, detail=f"Error in path finding: {str(e)}")
+            
+    except HTTPException as he:
+        raise he  # Re-raise HTTP exceptions
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Unexpected error: {str(e)}")  # Add debug logging
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 # @app.get("/get-plot/{filename}")
 # def get_plot(filename: str):
 #     """
