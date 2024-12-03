@@ -101,26 +101,16 @@ def set_nodes(tuple_nodes):
     return "hello"
 
 def find_path(supply_node, use_nodes):
-    #supply_node = (0, 0, 0)
-    #use_nodes = [nodes[-1], nodes[-2]]
-    # use_nodes = [
-    #     nodes[-1],       
-    #     nodes[-2],       
-    #     nodes[50],       
-    #     (90, 0, 0),      
-    #     (0, 90, 10),     
-    #     (40, 40, 40),    
-    #     (10, 90, 90),    
-    #     (80, 20, 40),    
-    #     nodes[100],      
-    #     (0, 0, 50)      
-    # ]
+    # Create a list of all nodes including supply, use nodes, and intermediate nodes
+    all_nodes = [supply_node] + use_nodes
+    
+    # Sort use nodes by distance to supply node
     use_nodes = sorted(use_nodes, key=lambda node: euclidean_distance(node, supply_node))
 
     print("Ordered use nodes by distance to supply node:", use_nodes)
 
-    # Construct the graph
-    graph = construct_graph(nodes[0])
+    # Construct the graph using all_nodes instead of nodes[0]
+    graph = construct_graph(all_nodes)
 
     # List to store paths for visualization
     paths = []
@@ -271,7 +261,7 @@ def find_path(supply_node, use_nodes):
 
     # return paths, totalPrice, fig_json
     # Separate nodes into categories
-    other_nodes = [node for node in nodes if node not in use_nodes and node != supply_node]
+    other_nodes = [node for node in all_nodes if node not in use_nodes and node != supply_node]
 
     # Visualization of paths in 3D using Plotly
     fig = go.Figure()
