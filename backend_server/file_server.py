@@ -321,17 +321,10 @@ async def upload_underground_3d_coordinates(file: UploadFile = File(...)):
             print(df.head())
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type.")
-
         processed_df = df  # Replace with actual processing logic
-
         node_tuples = df[["X", "Y", "Z"]].apply(tuple, axis=1).tolist()
-        
+        set_nodes(node_tuples)
         # Convert the DataFrame to CSV response
-        #return dataframe_to_csv_response(processed_df, "underground_3d_coordinates_processed.csv")
-        # return {
-        #     "message": "File uploaded successfully",
-        #     "nodes": node_tuples
-        # }
         return {
             "message": "File uploaded successfully"
         }
@@ -396,3 +389,7 @@ async def select_nodes(selection: NodeSelection):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+
+    
