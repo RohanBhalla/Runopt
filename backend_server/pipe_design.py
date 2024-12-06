@@ -260,7 +260,8 @@ def find_path(supply_node, use_nodes):
 
     # return paths, totalPrice, fig_json
     # Separate nodes into categories
-    other_nodes = [node for node in all_nodes if node not in use_nodes and node != supply_node]
+    #modified array
+    other_nodes = [node for node in nodes if node not in use_nodes and node != supply_node]
 
     # Visualization of paths in 3D using Plotly
     fig = go.Figure()
