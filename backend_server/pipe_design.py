@@ -102,15 +102,14 @@ def set_nodes(tuple_nodes):
 
 def find_path(supply_node, use_nodes):
     # Create a list of all nodes including supply, use nodes, and intermediate nodes
-    all_nodes = [supply_node] + use_nodes
+    #all_nodes = [supply_node] + use_nodes
     
     # Sort use nodes by distance to supply node
     use_nodes = sorted(use_nodes, key=lambda node: euclidean_distance(node, supply_node))
 
     print("Ordered use nodes by distance to supply node:", use_nodes)
 
-    # Construct the graph using all_nodes instead of nodes[0]
-    graph = construct_graph(all_nodes)
+    graph = construct_graph(nodes[0])
 
     # List to store paths for visualization
     paths = []
