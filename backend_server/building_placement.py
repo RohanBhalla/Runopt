@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from shapely.geometry import Point, Polygon, box
 from shapely.affinity import rotate, translate, scale
 from mpl_toolkits.mplot3d import Axes3D
+from slope_stability import slope_stability_calculation
 
 
 def read_excel_to_dataframe(file_path):
@@ -191,33 +192,78 @@ def calculate_cut_fill_from_grid(relevant_points_df, proposed_elevation):
         'relevant_points': relevant_points_df
     }
 
+def analyze_slope_stability_for_building(relevant_points_df, proposed_z, building_placement):
+    """
+    Analyze slope stability around a building placement and determine if retaining walls are needed.
+    """
+    # Create a slope stability dataframe for the points around the building
+    slope_stability_df = pd.DataFrame()
+    
+    # Calculate average existing elevation
+    avg_existing_z = relevant_points_df['z (existing)'].mean()
+    
+    # Calculate height difference
+    height_difference = abs(proposed_z - avg_existing_z)
+    
+    # Calculate slope angle (assuming a basic 2:1 slope from building edge)
+    slope_angle = np.degrees(np.arctan(1/2))  # 2:1 slope is approximately 26.57 degrees
+    
+    # Prepare slope stability input
+    slope_data = {
+        'X': [relevant_points_df['x'].mean()],
+        'Y': [relevant_points_df['y'].mean()],
+        'Z': [avg_existing_z],
+        'Slope Angle': [slope_angle],
+        'Height of slope': [height_difference],
+        'Friction Angle': [30],  # Assumed soil friction angle
+        'Cohesion': [25],       # Assumed soil cohesion (kPa)
+        'Unit Weight': [20]      # Assumed soil unit weight (kN/m³)
+    }
+    
+    slope_stability_df = pd.DataFrame(slope_data)
+    
+    # Calculate slope stability
+    stability_results, _ = slope_stability_calculation(slope_stability_df)
+    
+    # Determine if retaining wall is needed
+    needs_retaining_wall = stability_results['Factor of Safety'].iloc[0] < 1.5
+    
+    if needs_retaining_wall:
+        # Calculate retaining wall properties
+        wall_height = height_difference
+        wall_length = np.sqrt(building_placement.area) # Approximate wall length based on building size
+        
+        retaining_wall_data = {
+            'X': slope_data['X'][0],
+            'Y': slope_data['Y'][0],
+            'Z': avg_existing_z,
+            'Wall Height': wall_height,
+            'Wall Length': wall_length,
+            'Factor of Safety': stability_results['Factor of Safety'].iloc[0]
+        }
+        
+        return True, retaining_wall_data
+    
+    return False, None
 
 def calculate_optimum_cut_fill(building_positions, surface_df, extension_percentage, z_min, z_max, z_step):
     # Ensure column names are lowercase at the start
     surface_df.columns = surface_df.columns.str.lower()
     
-    # Use lowercase column name for z_min and z_max if not provided
-    if z_min is None:
-        z_min = surface_df['z (existing)'].min()
-    if z_max is None:
-        z_max = surface_df['z (existing)'].max()
-
+    # Initialize retaining walls DataFrame
+    retaining_walls_df = pd.DataFrame(columns=['X', 'Y', 'Z', 'Wall Height', 'Wall Length', 'Factor of Safety'])
+    
     # Cost variables
-    unclassified_excavation_cost = 143  # Cost per unit cut
-    select_granular_fill = 144            # Cost per unit fill
+    unclassified_excavation_cost = 143
+    select_granular_fill = 144
+    retaining_wall_cost_per_sqm = 500  # Added cost for retaining walls
 
     optimum_results = {}
-
-    # Calculate average Z value for the relevant points
-        avg_z = relevant_points_df['z (existing)'].mean()
 
     for idx, placement in enumerate(building_positions):
         print(f"Processing building {idx + 1}...")
 
-        # Extend the region around the building by the given percentage
         extended_region = extend_building_region(placement, extension_percentage)
-
-        # Find relevant points in the extended region
         relevant_points_df = find_points_in_extended_region(extended_region, surface_df)
 
         if relevant_points_df.empty:
@@ -226,65 +272,69 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
 
         best_z = None
         best_cut_fill = None
-        min_net_volume = float('inf')  # Set to a large number initially
-        min_cost = float('inf')         # Set to a large number initially
-        min_cost_z = None                # To store the z that gives the minimum cost
-        
-        # Dictionary to store all cut and fill results by z value
+        min_net_volume = float('inf')
+        min_cost = float('inf')
+        min_cost_z = None
         all_cut_fill_by_z = {}
 
-        # Loop over the range of Z values
+        # Calculate average Z value for the relevant points
+        avg_z = relevant_points_df['z (existing)'].mean()
+
         for proposed_z in np.arange(z_min, z_max + z_step, z_step):
-            # Calculate cut and fill for the current Z value
             cut_fill_result = calculate_cut_fill_from_grid(relevant_points_df, proposed_z)
+            
             if cut_fill_result:
+                # Analyze slope stability and check if retaining wall is needed
+                needs_wall, wall_data = analyze_slope_stability_for_building(
+                    relevant_points_df, 
+                    proposed_z, 
+                    placement
+                )
+                
                 cut_volume = cut_fill_result['cut_volume']
                 fill_volume = cut_fill_result['fill_volume']
                 
-                # Calculate costs
+                # Calculate base costs
                 cut_cost = cut_volume * unclassified_excavation_cost
                 fill_cost = fill_volume * select_granular_fill
-                total_cost = cut_cost + fill_cost  # Calculate total cost for this Z value
+                total_cost = cut_cost + fill_cost
 
-                # Store this cut and fill result in the dictionary
+                # Add retaining wall cost if needed
+                if needs_wall:
+                    wall_area = wall_data['Wall Height'] * wall_data['Wall Length']
+                    total_cost += wall_area * retaining_wall_cost_per_sqm
+                    # Add wall to retaining walls DataFrame
+                    retaining_walls_df = pd.concat([
+                        retaining_walls_df,
+                        pd.DataFrame([wall_data])
+                    ], ignore_index=True)
+
+                # Store results
                 all_cut_fill_by_z[proposed_z] = {
                     'cut_volume': cut_volume,
                     'fill_volume': fill_volume,
                     'cut_cost': cut_cost,
                     'fill_cost': fill_cost,
-                    'total_cost': total_cost  # Store total cost
+                    'total_cost': total_cost,
+                    'needs_retaining_wall': needs_wall
                 }
 
-                # Calculate net volume (cut - fill)
-                net_volume = abs(cut_volume - fill_volume)
-
-                # Update if this Z gives a smaller net volume
-                if net_volume < min_net_volume:
-                    min_net_volume = net_volume
-                    best_z = proposed_z
-                    best_cut_fill = cut_fill_result
-
-                # Update minimum cost if this is lower
+                # Update if this gives a smaller cost
                 if total_cost < min_cost:
                     min_cost = total_cost
-                    min_cost_z = proposed_z  # Store the z associated with min cost
+                    min_cost_z = proposed_z
+                    best_cut_fill = cut_fill_result
 
         if best_cut_fill is not None:
-            # Store the optimum Z, cut/fill values, costs, and all cut/fill values for this building
             optimum_results[placement] = {
-                'best_z': best_z,
+                'best_z': min_cost_z,
                 'cut_volume': best_cut_fill['cut_volume'],
                 'fill_volume': best_cut_fill['fill_volume'],
-                'net_volume': min_net_volume,
-                'min_cost': min_cost,          # Store minimum cost for this building
-                'min_cost_z': min_cost_z,      # Store z associated with min cost
-                'all_cut_fill_by_z': all_cut_fill_by_z  # Store all cut/fill values by z
+                'min_cost': min_cost,
+                'all_cut_fill_by_z': all_cut_fill_by_z
             }
-            print(f"Building {idx + 1}: Optimum Z = {best_z}, Net Volume = {min_net_volume}, Minimum Cost = {min_cost} at Z = {min_cost_z}")
-        else:
-            print(f"Skipping building placement {idx + 1}: No valid cut and fill data found.")
 
-    return optimum_results
+    return optimum_results, retaining_walls_df
 
 
 
