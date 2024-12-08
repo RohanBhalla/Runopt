@@ -208,6 +208,9 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
 
     optimum_results = {}
 
+    # Calculate average Z value for the relevant points
+        avg_z = relevant_points_df['z (existing)'].mean()
+
     for idx, placement in enumerate(building_positions):
         print(f"Processing building {idx + 1}...")
 
