@@ -418,9 +418,9 @@ def slope_stability_calculation(slopeStabilityDF):
     # # Serialize the figure to JSON
     # fig_json = fig.to_json()
     color_map = {
-        'Safe': 'green',
-        'Questionable': 'yellow',
-        'Not Safe': 'red'
+        'Safe': '#AAFFAA',
+        'Questionable': '#FFFFAA',
+        'Not Safe': '#FFAAAA'
     }
 
     # Assign colors based on the Danger Check column
@@ -444,19 +444,19 @@ def slope_stability_calculation(slopeStabilityDF):
     fig.add_trace(go.Scatter3d(
         x=[None], y=[None], z=[None],
         mode='markers',
-        marker=dict(size=10, color='green'),
+        marker=dict(size=10, color='#AAFFAA'),
         name='Safe'
     ))
     fig.add_trace(go.Scatter3d(
         x=[None], y=[None], z=[None],
         mode='markers',
-        marker=dict(size=10, color='yellow'),
+        marker=dict(size=10, color='#FFFFAA'),
         name='Questionable'
     ))
     fig.add_trace(go.Scatter3d(
         x=[None], y=[None], z=[None],
         mode='markers',
-        marker=dict(size=10, color='red'),
+        marker=dict(size=10, color='#FFAAAA'),
         name='Not Safe'
     ))
 
