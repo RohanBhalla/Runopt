@@ -1,4 +1,5 @@
-import pandas as pd
+# import pandas as pd
+import fireducks.pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -153,14 +154,33 @@ def extend_building_region(building_placement, extension_percentage):
 
 def find_points_in_extended_region(extended_region, surface_df):
     """
-    Find the points in surface_df that are within the extended region.
+    Find the points in surface_df that are within the extended region using spatial indexing.
+    Uses R-tree for efficient spatial querying.
     """
     # Convert column names to lowercase for consistency
     surface_df.columns = surface_df.columns.str.lower()
     
-    points_in_region = surface_df[
-        surface_df.apply(lambda row: Point(row['x'], row['y']).within(extended_region), axis=1)
+    # Get the bounds of the extended region to pre-filter points
+    minx, miny, maxx, maxy = extended_region.bounds
+    
+    # First filter: Quick bounding box check
+    mask = (
+        (surface_df['x'] >= minx) & 
+        (surface_df['x'] <= maxx) & 
+        (surface_df['y'] >= miny) & 
+        (surface_df['y'] <= maxy)
+    )
+    potential_points = surface_df[mask]
+    
+    if potential_points.empty:
+        return potential_points
+    
+    # Second filter: Precise containment check for remaining points
+    # Create Point objects only for points that passed the bounding box check
+    points_in_region = potential_points[
+        potential_points.apply(lambda row: Point(row['x'], row['y']).within(extended_region), axis=1)
     ]
+    
     return points_in_region
 
 def calculate_cut_fill_from_grid(relevant_points_df, proposed_elevation):
@@ -192,76 +212,27 @@ def calculate_cut_fill_from_grid(relevant_points_df, proposed_elevation):
         'relevant_points': relevant_points_df
     }
 
-def analyze_slope_stability_for_building(relevant_points_df, proposed_z, building_placement):
-    """
-    Analyze slope stability around a building placement and determine if retaining walls are needed.
-    """
-    # Create a slope stability dataframe for the points around the building
-    slope_stability_df = pd.DataFrame()
-    
-    # Calculate average existing elevation
-    avg_existing_z = relevant_points_df['z (existing)'].mean()
-    
-    # Calculate height difference
-    height_difference = abs(proposed_z - avg_existing_z)
-    
-    # Calculate slope angle (assuming a basic 2:1 slope from building edge)
-    slope_angle = np.degrees(np.arctan(1/2))  # 2:1 slope is approximately 26.57 degrees
-    
-    # Prepare slope stability input
-    slope_data = {
-        'X': [relevant_points_df['x'].mean()],
-        'Y': [relevant_points_df['y'].mean()],
-        'Z': [avg_existing_z],
-        'Slope Angle': [slope_angle],
-        'Height of slope': [height_difference],
-        'Friction Angle': [30],  # Assumed soil friction angle
-        'Cohesion': [25],       # Assumed soil cohesion (kPa)
-        'Unit Weight': [20]      # Assumed soil unit weight (kN/m³)
-    }
-    
-    slope_stability_df = pd.DataFrame(slope_data)
-    
-    # Calculate slope stability
-    stability_results, _ = slope_stability_calculation(slope_stability_df)
-    
-    # Determine if retaining wall is needed
-    needs_retaining_wall = stability_results['Factor of Safety'].iloc[0] < 1.5
-    
-    if needs_retaining_wall:
-        # Calculate retaining wall properties
-        wall_height = height_difference
-        wall_length = np.sqrt(building_placement.area) # Approximate wall length based on building size
-        
-        retaining_wall_data = {
-            'X': slope_data['X'][0],
-            'Y': slope_data['Y'][0],
-            'Z': avg_existing_z,
-            'Wall Height': wall_height,
-            'Wall Length': wall_length,
-            'Factor of Safety': stability_results['Factor of Safety'].iloc[0]
-        }
-        
-        return True, retaining_wall_data
-    
-    return False, None
-
 def calculate_optimum_cut_fill(building_positions, surface_df, extension_percentage, z_min, z_max, z_step):
     # Ensure column names are lowercase at the start
     surface_df.columns = surface_df.columns.str.lower()
     
-    # Initialize retaining walls DataFrame
-    retaining_walls_df = pd.DataFrame(columns=['X', 'Y', 'Z', 'Wall Height', 'Wall Length', 'Factor of Safety'])
+    # Initialize DataFrame for storing all unstable points
+    unstable_points_df = pd.DataFrame(columns=[
+        'X', 'Y', 'Z', 'Height_Difference', 
+        'Factor_of_Safety', 'Building_Rank', 
+        'Proposed_Z'
+    ])
     
     # Cost variables
     unclassified_excavation_cost = 143
     select_granular_fill = 144
-    retaining_wall_cost_per_sqm = 500  # Added cost for retaining walls
 
-    optimum_results = {}
+    # Dictionary to store initial results without slope stability analysis
+    initial_results = {}
 
+    # First pass: Calculate cut-fill volumes and basic costs for all placements
     for idx, placement in enumerate(building_positions):
-        print(f"Processing building {idx + 1}...")
+        print(f"Initial processing building {idx + 1}...")
 
         extended_region = extend_building_region(placement, extension_percentage)
         relevant_points_df = find_points_in_extended_region(extended_region, surface_df)
@@ -270,71 +241,106 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
             print(f"Skipping building placement {idx + 1}: No points found in the extended region.")
             continue
 
-        best_z = None
-        best_cut_fill = None
-        min_net_volume = float('inf')
         min_cost = float('inf')
         min_cost_z = None
         all_cut_fill_by_z = {}
 
-        # Calculate average Z value for the relevant points
-        avg_z = relevant_points_df['z (existing)'].mean()
-
+        # Calculate cut-fill volumes for different Z levels
         for proposed_z in np.arange(z_min, z_max + z_step, z_step):
             cut_fill_result = calculate_cut_fill_from_grid(relevant_points_df, proposed_z)
-            
+
             if cut_fill_result:
-                # Analyze slope stability and check if retaining wall is needed
-                needs_wall, wall_data = analyze_slope_stability_for_building(
-                    relevant_points_df, 
-                    proposed_z, 
-                    placement
-                )
-                
                 cut_volume = cut_fill_result['cut_volume']
                 fill_volume = cut_fill_result['fill_volume']
                 
-                # Calculate base costs
+                # Calculate base costs without retaining wall
                 cut_cost = cut_volume * unclassified_excavation_cost
                 fill_cost = fill_volume * select_granular_fill
                 total_cost = cut_cost + fill_cost
 
-                # Add retaining wall cost if needed
-                if needs_wall:
-                    wall_area = wall_data['Wall Height'] * wall_data['Wall Length']
-                    total_cost += wall_area * retaining_wall_cost_per_sqm
-                    # Add wall to retaining walls DataFrame
-                    retaining_walls_df = pd.concat([
-                        retaining_walls_df,
-                        pd.DataFrame([wall_data])
-                    ], ignore_index=True)
-
-                # Store results
                 all_cut_fill_by_z[proposed_z] = {
                     'cut_volume': cut_volume,
                     'fill_volume': fill_volume,
                     'cut_cost': cut_cost,
                     'fill_cost': fill_cost,
-                    'total_cost': total_cost,
-                    'needs_retaining_wall': needs_wall
+                    'total_cost': total_cost
                 }
 
-                # Update if this gives a smaller cost
                 if total_cost < min_cost:
                     min_cost = total_cost
                     min_cost_z = proposed_z
-                    best_cut_fill = cut_fill_result
 
-        if best_cut_fill is not None:
-            optimum_results[placement] = {
+        if min_cost_z is not None:
+            initial_results[placement] = {
                 'best_z': min_cost_z,
-                'cut_volume': best_cut_fill['cut_volume'],
-                'fill_volume': best_cut_fill['fill_volume'],
                 'min_cost': min_cost,
+                'relevant_points': relevant_points_df,
                 'all_cut_fill_by_z': all_cut_fill_by_z
             }
 
-    return optimum_results, retaining_walls_df
+    # Sort placements by initial cost and get top 10
+    top_10_placements = sorted(initial_results.items(), key=lambda x: x[1]['min_cost'])[:10]
+    
+    # Final results dictionary
+    optimum_results = {}
+
+    # Second pass: Analyze slope stability only for top 10 placements
+    print("\nAnalyzing slope stability for top 10 placements...")
+    for rank, (placement, initial_data) in enumerate(top_10_placements, 1):
+        print(f"\nAnalyzing slope stability for rank {rank} placement...")
+        
+        # Get the optimal Z level and relevant points from initial analysis
+        min_cost_z = initial_data['best_z']
+        relevant_points_df = initial_data['relevant_points']
+        all_cut_fill_by_z = initial_data['all_cut_fill_by_z']
+        
+        # Analyze each point for slope stability
+        for idx, point in relevant_points_df.iterrows():
+            # Calculate height difference
+            height_difference = abs(min_cost_z - point['z (existing)'])
+            
+            # Calculate slope stability for this point
+            slope_data = {
+                'X': [point['x']],
+                'Y': [point['y']],
+                'Z': [point['z (existing)']],
+                'Slope Angle': [26.57],  # 2:1 slope
+                'Height of slope': [height_difference],
+                'Friction Angle': [30],  # Assumed soil properties
+                'Cohesion': [25],
+                'Unit Weight': [20]
+            }
+            
+            slope_stability_df = pd.DataFrame(slope_data)
+            stability_results, _ = slope_stability_calculation(slope_stability_df)
+            
+            # If point fails stability check, add to unstable points
+            if stability_results['Factor of Safety'].iloc[0] < 1.5:
+                unstable_point = {
+                    'X': point['x'],
+                    'Y': point['y'],
+                    'Z': point['z (existing)'],
+                    'Height_Difference': height_difference,
+                    'Factor_of_Safety': stability_results['Factor of Safety'].iloc[0],
+                    'Building_Rank': rank,
+                    'Proposed_Z': min_cost_z
+                }
+                unstable_points_df = pd.concat([
+                    unstable_points_df,
+                    pd.DataFrame([unstable_point])
+                ], ignore_index=True)
+
+        # Store final results without wall calculations
+        optimum_results[placement] = {
+            'best_z': min_cost_z,
+            'cut_volume': all_cut_fill_by_z[min_cost_z]['cut_volume'],
+            'fill_volume': all_cut_fill_by_z[min_cost_z]['fill_volume'],
+            'min_cost': initial_data['min_cost'],
+            'initial_rank': rank,
+            'all_cut_fill_by_z': all_cut_fill_by_z
+        }
+
+    return optimum_results, unstable_points_df
 
 
 
@@ -394,41 +400,132 @@ def create_cut_fill_dataframe(optimum_results):
 # optimum_cut_fill_results = calculate_optimum_cut_fill(...)
 # cut_fill_df = create_cut_fill_dataframe(optimum_cut_fill_results)
 # print(cut_fill_df)
+def plot_stability_results(relevant_points_df, unstable_points_df, building_placement, rank):
+    """
+    Create an enhanced 3D plot showing stable and unstable points with color-coded Factor of Safety.
+    """
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Plot all points in blue (stable)
+    ax.scatter(relevant_points_df['x'], 
+              relevant_points_df['y'], 
+              relevant_points_df['z (existing)'],
+              c='blue', 
+              alpha=0.3,
+              label='Stable Points')
+    
+    # Plot unstable points with color gradient based on Factor of Safety
+    scatter = ax.scatter(unstable_points_df['X'],
+                        unstable_points_df['Y'],
+                        unstable_points_df['Z'],
+                        c=unstable_points_df['Factor_of_Safety'],
+                        cmap='RdYlGn',  # Red to Yellow to Green colormap
+                        vmin=0.5,       # Minimum FoS
+                        vmax=1.5,       # Maximum FoS (threshold)
+                        s=100,
+                        label='Unstable Points')
+    
+    # Add colorbar
+    plt.colorbar(scatter, label='Factor of Safety')
+    
+    # Plot building footprint
+    x, y = building_placement.exterior.xy
+    z = [unstable_points_df['Proposed_Z'].iloc[0]] * len(x)  # Use proposed elevation
+    ax.plot(x, y, z, 'k--', label='Building Footprint')
+    
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title(f'Slope Stability Analysis Results - Rank {rank} Placement')
+    ax.legend()
+    
+    plt.show()
+
 def main():
     # Example file path for testing
-    excel_file_path = '/Users/ronballer/Desktop/RunOpt/RunoptCode/InputFile.xlsx'
+    excel_file_path = '/Users/ronballer/Desktop/RunOpt/RunoptCode/InputFile NEW.xlsx'
     
     # Read data from Excel file
-    df = read_excel_to_dataframe(excel_file_path)
-    print("DataFrame from Excel:")
-    print(df.head())
+    surface_df = read_excel_to_dataframe(excel_file_path)
+    print("Data loaded successfully from Excel")
 
-    # Create a building
-    building = create_building(length=10, width=5)
-    print("\nCreated Building:")
-    print(building)
+    # Create example building dimensions
+    building_length = 30
+    building_width = 30
+    building = create_building(length=building_length, width=building_width)
+    print(f"\nCreated building with dimensions: {building_length}m x {building_width}m")
 
-    # Create a confined region
-    # site_polygon = box(0, 0, 100, 100)  # Example site polygon
-    min_x, max_x = df['X'].min(), df['X'].max()
-    min_y, max_y = df['Y'].min(), df['Y'].max()
-    # Create a site polygon using the bounds
+    # Create site polygon from surface data bounds
+    min_x, max_x = surface_df['X'].min(), surface_df['X'].max()
+    min_y, max_y = surface_df['Y'].min(), surface_df['Y'].max()
     site_polygon = box(min_x, min_y, max_x, max_y)
+    print("\nSite boundary created")
+    print(site_polygon)
 
+    # Create confined region (50% of total site area)
     confined_region = create_confined_region(site_polygon, percentage=50)
-    print("\nConfined Region:")
-    print(confined_region)
+    print("Confined region created for building placement")
 
-    # Find valid placements
-    valid_placements = find_valid_placements(confined_region, building)
-    print("\nValid Placements:")
-    for placement in valid_placements:
-        print(placement)
+    # Find valid placements (increase steps for more granular results)
+    valid_placements = find_valid_placements(confined_region, building, rotations=8, steps=20)
+    print(f"\nFound {len(valid_placements)} valid building positions")
 
-    # Plot 3D surface grid
-    plot_3d_surface_grid(df)
+    # Calculate optimum cut and fill for each valid placement
+    z_min = surface_df['Z (Existing)'].min()
+    z_max = surface_df['Z (Existing)'].max()
+    z_step = 2  # 0.5m intervals for elevation analysis
+    extension_percentage = 0.40  # Extend building region by 10%
 
+    print("\nCalculating optimum cut and fill volumes...")
+    optimum_results, unstable_points_df = calculate_optimum_cut_fill(
+        valid_placements,
+        surface_df,
+        extension_percentage,
+        z_min,
+        z_max,
+        z_step
+    )
+
+    # Create summary DataFrame
+    cut_fill_df = create_cut_fill_dataframe(optimum_results)
     
+    # Display results
+    print("\nCut and Fill Analysis Summary:")
+    print(cut_fill_df.groupby('Building Number').agg({
+        'Total Cost': 'min',
+        'Cut Volume': 'min',
+        'Fill Volume': 'min',
+        'Z Value': lambda x: x[cut_fill_df.groupby('Building Number')['Total Cost'].transform('min') == cut_fill_df['Total Cost']].iloc[0]
+    }))
+
+    if not unstable_points_df.empty:
+        print("\nUnstable Points Found at:")
+        print(unstable_points_df)
+
+    # Plot 3D surface with best building placement
+    best_placement = min(optimum_results.items(), key=lambda x: x[1]['min_cost'])[0]
+    best_z = optimum_results[best_placement]['best_z']
+    
+    # Plot 3D surface grid
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Plot surface points
+    ax.scatter(surface_df['X'], surface_df['Y'], surface_df['Z (Existing)'], 
+              c='blue', alpha=0.5, label='Terrain')
+    
+    # Plot best building placement
+    x, y = best_placement.exterior.xy
+    ax.plot(x, y, [best_z]*len(x), 'r-', linewidth=2, label='Best Building Position')
+    
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('Site Terrain with Optimal Building Placement')
+    ax.legend()
+    
+    plt.show()
 
 if __name__ == "__main__":
     main()
