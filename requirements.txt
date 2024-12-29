@@ -3,6 +3,6 @@ uvicorn
 pandas
 pydantic
 matplotlib
-plotly
+plotly>=5.18.0
 shapely
 python-multipart

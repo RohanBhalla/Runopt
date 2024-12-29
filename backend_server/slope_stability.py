@@ -254,51 +254,42 @@ def double_interpolation(friction_angle, slope_angle):
     return interpolated_stability_number
 
 def StabilityIteration(slopeStabilityDF):
-    res = []
-    for index, row in slopeStabilityDF.iterrows():
+    def get_stability_number(row):
         slope_angle, friction_angle = row['Slope Angle'], row['Friction Angle']
-
         if friction_angle in taylor_chart:
             if slope_angle in taylor_chart[friction_angle]:
-                res.append(taylor_chart[friction_angle][slope_angle])
+                return taylor_chart[friction_angle][slope_angle]
             else:
-                res.append(slope_angle_interpolation(friction_angle, slope_angle))
+                return slope_angle_interpolation(friction_angle, slope_angle)
         else:
             if slope_angle in taylor_chart[5]:
-                res.append(friction_angle_interpolation(friction_angle,slope_angle))
+                return friction_angle_interpolation(friction_angle, slope_angle)
             else:
-                res.append(double_interpolation(friction_angle,slope_angle))
-    slopeStabilityDF['Stability Number'] = res
+                return double_interpolation(friction_angle, slope_angle)
+    slopeStabilityDF['Stability Number'] = slopeStabilityDF.apply(get_stability_number, axis=1)
     return slopeStabilityDF
 
 def calculateCriticalHeight(slopeStabilityDF):
-    criticalHeight = [] # Set up the result array
-
-    #Fill the criticalHeight array with values
-    for i in range(len(slopeStabilityDF)):
-        criticalHeight.append(slopeStabilityDF['Cohesion'][i] / (slopeStabilityDF['Unit Weight'][i] * slopeStabilityDF['Stability Number'][i]))
-
-    slopeStabilityDF['Critical Height'] = criticalHeight
+    # Vectorized calculation of Critical Height
+    slopeStabilityDF['Critical Height'] = slopeStabilityDF['Cohesion'] / (
+        slopeStabilityDF['Unit Weight'] * slopeStabilityDF['Stability Number']
+    )
     return slopeStabilityDF
 def calculateFactorofSafety(slopeStabilityDF):
-    # Calculate the factor of safety (FoS)
-    FactorofSafetyValues = [] # Set up the result array
-    DangerCheckValues = [] # Set up the result array
-
-    # Fill the FactorofSafetyValues and DangerCheckValues arrays with values
-    for i in range(len(slopeStabilityDF)):
-        FoS = slopeStabilityDF['Critical Height'][i] / slopeStabilityDF['Height of slope'][i]
-        if FoS < 1:
-            DangerCheckValues.append('Not Safe')
-        elif 1 <= FoS < 1.5:
-            DangerCheckValues.append('Questionable')
-        else:
-            DangerCheckValues.append('Safe')
-        FactorofSafetyValues.append(FoS)
-
-    slopeStabilityDF['Factor of Safety'] = FactorofSafetyValues
-    slopeStabilityDF['Danger Check'] = DangerCheckValues
-
+    # Vectorized calculation of Factor of Safety
+    slopeStabilityDF['Factor of Safety'] = (
+        slopeStabilityDF['Critical Height'] / slopeStabilityDF['Height of slope']
+    )
+    
+    # Vectorized assignment of Danger Check based on Factor of Safety
+    conditions = [
+        slopeStabilityDF['Factor of Safety'] < 1,
+        (slopeStabilityDF['Factor of Safety'] >= 1) & (slopeStabilityDF['Factor of Safety'] < 1.5),
+        slopeStabilityDF['Factor of Safety'] >= 1.5
+    ]
+    choices = ['Not Safe', 'Questionable', 'Safe']
+    slopeStabilityDF['Danger Check'] = np.select(conditions, choices, default='Unknown')
+    
     return slopeStabilityDF
 
 def slope_stability_calculation(slopeStabilityDF):
@@ -375,45 +366,6 @@ def slope_stability_calculation(slopeStabilityDF):
     #     ),
     #     margin=dict(l=0, r=0, b=0, t=40)
     # )
-
-    # # Serialize the figure to JSON
-    # fig_json = fig.to_json()
-    # color_map = {
-    #     'Safe': 'green',
-    #     'Questionable': 'yellow',
-    #     'Not Safe': 'red'
-    # }
-
-    # # Assign colors based on the Danger Check column
-    # colors = slopeStabilityDF['Danger Check'].map(color_map)
-
-    # # Create the 3D scatter plot using Plotly
-    # fig = go.Figure(data=go.Scatter3d(
-    #     x=slopeStabilityDF['X'],
-    #     y=slopeStabilityDF['Y'],
-    #     z=slopeStabilityDF['Z'],
-    #     mode='markers',
-    #     marker=dict(
-    #         size=5,
-    #         color=colors,  # Use the color mapping
-    #         opacity=0.8
-    #     ),
-    #     text=slopeStabilityDF['Danger Check']  # Add hover info
-    # ))
-
-    # # Set plot layout
-    # fig.update_layout(
-    #     title="3D Terrain Slope Stability Safety Mapping",
-    #     scene=dict(
-    #         xaxis_title="X Axis",
-    #         yaxis_title="Y Axis",
-    #         zaxis_title="Z Axis"
-    #     ),
-    #     margin=dict(l=0, r=0, b=0, t=40)
-    # )
-
-    # # Show the plot in the backend
-    # fig.show()
 
     # # Serialize the figure to JSON
     # fig_json = fig.to_json()
