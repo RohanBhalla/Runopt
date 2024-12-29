@@ -1,0 +1,4 @@
+/logs/
+/backend_server/logs/
+/backend_server/__pycache__/
+*.html
