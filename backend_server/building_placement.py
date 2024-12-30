@@ -314,13 +314,21 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
             initial_results[placement] = data
     
     # Sort placements by initial cost and get top 10
-    top_10_placements = sorted(initial_results.items(), key=lambda x: x[1]['min_cost'])[:10]
+    global top_10_placements
+    top_10_placements = sorted(
+        initial_results.items(), 
+        key=lambda x: x[1]['min_cost']
+    )[:10]
     
     # Final results dictionary
     optimum_results = {}
     
     # Second pass: Analyze slope stability only for top 10 placements
     print("\nAnalyzing slope stability for top 10 placements...")
+    
+    # Initialize list to store all unstable points
+    all_unstable_points = []
+    
     for rank, (placement, initial_data) in enumerate(top_10_placements, 1):
         print(f"\nAnalyzing slope stability for rank {rank} placement...")
         
@@ -343,7 +351,11 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
                 Building_Rank=rank,
                 Proposed_Z=min_cost_z
             )
-            unstable_points.append(failed_points[['x', 'y', 'z (existing)', 'Height_Difference', 'Factor_of_Safety', 'Building_Rank', 'Proposed_Z']])
+            # Add to all unstable points
+            all_unstable_points.append(failed_points[['x', 'y', 'z (existing)', 'Height_Difference', 'Factor_of_Safety', 'Building_Rank', 'Proposed_Z']])
+            
+            # Log the number of unstable points found
+            logging.info(f"Found {len(failed_points)} unstable points for building {rank}")
         
         # Store final results without wall calculations
         optimum_results[placement] = {
@@ -356,9 +368,14 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
         }
     
     # Concatenate all unstable points at once
-    if unstable_points:
-        unstable_points_df = pd.concat(unstable_points, ignore_index=True)
+    if all_unstable_points:
+        unstable_points_df = pd.concat(all_unstable_points, ignore_index=True)
+        logging.info(f"Total unstable points found: {len(unstable_points_df)}")
+        # Debug print of unstable points
+        logging.debug("Sample of unstable points:")
+        logging.debug(unstable_points_df.head())
     else:
+        logging.warning("No unstable points found for any building placement")
         unstable_points_df = pd.DataFrame(columns=[
             'x', 'y', 'z (existing)', 'Height_Difference', 
             'Factor_of_Safety', 'Building_Rank', 
@@ -590,6 +607,122 @@ def plot_stability_results_plotly(relevant_points_df, unstable_points_df, buildi
 
     return fig
 
+def plot_all_stability_results_plotly(surface_df, unstable_points_df, optimum_results, top_10_placements):
+    """
+    Create a multi-plot visualization showing only unstable points for all top 10 building placements
+    """
+    logging.info(f"Starting to plot stability results. Unstable points shape: {unstable_points_df.shape}")
+    
+    # Create subplots: 2 rows, 5 columns
+    fig = make_subplots(
+        rows=2, cols=5,
+        subplot_titles=[f'Building Rank {rank}' for rank in range(1, 11)],
+        specs=[[{'type': 'scene'} for _ in range(5)] for _ in range(2)],
+        vertical_spacing=0.05,
+        horizontal_spacing=0.02
+    )
+
+    for idx, (placement, data) in enumerate(top_10_placements, 1):
+        row = (idx - 1) // 5 + 1
+        col = (idx - 1) % 5 + 1
+
+        # Filter unstable points for this building
+        building_unstable = unstable_points_df[unstable_points_df['Building_Rank'] == idx] if not unstable_points_df.empty else pd.DataFrame()
+        logging.info(f"Building {idx} has {len(building_unstable)} unstable points")
+
+        # Add unstable points if they exist
+        if not building_unstable.empty:
+            logging.debug(f"Building {idx} unstable points sample:")
+            logging.debug(building_unstable.head())
+            
+            unstable_points = go.Scatter3d(
+                x=building_unstable['x'],
+                y=building_unstable['y'],
+                z=building_unstable['z (existing)'],
+                mode='markers',
+                marker=dict(
+                    size=6,
+                    color=building_unstable['Factor_of_Safety'],
+                    colorscale='RdYlGn',
+                    opacity=0.8,
+                    cmin=0.5,
+                    cmax=1.5,
+                    colorbar=dict(
+                        title='Factor of Safety',
+                        len=0.5,
+                        y=(row-1)*0.5 + 0.25
+                    )
+                ),
+                name=f'Unstable Points {idx}',
+                showlegend=True
+            )
+            fig.add_trace(unstable_points, row=row, col=col)
+        else:
+            logging.info(f"No unstable points found for building {idx}")
+
+        # Add building footprint
+        x, y = placement.exterior.xy
+        z = [data['best_z']] * len(x)
+        building = go.Scatter3d(
+            x=list(x),
+            y=list(y),
+            z=z,
+            mode='lines',
+            line=dict(
+                color='black',
+                width=4
+            ),
+            name=f'Building {idx}',
+            showlegend=True
+        )
+        fig.add_trace(building, row=row, col=col)
+
+        # Update subplot layout
+        fig.update_scenes(
+            dict(
+                xaxis_title="X",
+                yaxis_title="Y",
+                zaxis_title="Z",
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1.5)
+                ),
+                # Add grid lines for better spatial reference
+                xaxis=dict(showgrid=True, gridwidth=1, gridcolor='lightgrey'),
+                yaxis=dict(showgrid=True, gridwidth=1, gridcolor='lightgrey'),
+                zaxis=dict(showgrid=True, gridwidth=1, gridcolor='lightgrey')
+            ),
+            row=row,
+            col=col
+        )
+
+    # Update overall layout
+    fig.update_layout(
+        title=dict(
+            text="Unstable Points Analysis for Top 10 Building Placements",
+            y=0.95
+        ),
+        height=1200,
+        width=2000,
+        showlegend=True,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        )
+    )
+
+    # Add a note about the Factor of Safety color scale
+    fig.add_annotation(
+        text="Factor of Safety: Red (<1.0) → Yellow (1.0-1.5) → Green (>1.5)",
+        xref="paper", yref="paper",
+        x=0, y=1.05,
+        showarrow=False,
+        font=dict(size=12)
+    )
+
+    return fig
+
 def main():
     # Set up logging at the start
     log_file = setup_logging()
@@ -721,6 +854,27 @@ def main():
 
     logging.info("\nOptimization process completed")
     logging.info(f"Debug log has been saved to: {log_file}")
+
+    # After calculating optimum_results and unstable_points_df
+    print("\nGenerating stability analysis visualizations...")
+    
+    # Check if top_10_placements exists
+    if 'top_10_placements' in globals():
+        # Create visualization for all top 10 placements
+        stability_fig = plot_all_stability_results_plotly(
+            surface_df,
+            unstable_points_df,
+            optimum_results,
+            top_10_placements
+        )
+        
+        # Save the plot as HTML file
+        stability_fig.write_html("stability_analysis_top10.html")
+        
+        # Open in browser
+        stability_fig.show()
+    else:
+        logging.warning("No top 10 placements found for visualization")
 
 def calculate_cut_fill_vectorized(relevant_points_gdf, proposed_zs):
     """
