@@ -296,79 +296,13 @@ def slope_stability_calculation(slopeStabilityDF):
     slopeStabilityDF = StabilityIteration(slopeStabilityDF)
     slopeStabilityDF = calculateCriticalHeight(slopeStabilityDF)
     slopeStabilityDF = calculateFactorofSafety(slopeStabilityDF)
-
-#     color_map = {
-#     'Safe': 'green',
-#     'Questionable': 'yellow',
-#     'Not Safe': 'red'
-# }
-
-#     # Assign colors based on the Danger Check column
-#     colors = slopeStabilityDF['Danger Check'].map(color_map)
-
-#     # Create a 3D plot
-#     fig = plt.figure(figsize=(10, 8))
-#     ax = fig.add_subplot(111, projection='3d')
-
-#     # Scatter plot of the terrain with color coding based on safety
-#     scatter = ax.scatter(
-#         slopeStabilityDF['X'],
-#         slopeStabilityDF['Y'],
-#         slopeStabilityDF['Z'],
-#         c=colors,
-#         marker='o'
-#     )
-
-#     # Set labels
-#     ax.set_xlabel('X Axis')
-#     ax.set_ylabel('Y Axis')
-#     ax.set_zlabel('Z Axis')
-#     ax.set_title('3D Terrain Slope Stability Safety Mapping')
-
-#     # Create Labels
-#     elements = [Line2D([0], [0], marker='o', color='w', markerfacecolor='green', markersize=10, label='Safe'),
-#                     Line2D([0], [0], marker='o', color='w', markerfacecolor='yellow', markersize=10, label='Questionable'),
-#                     Line2D([0], [0], marker='o', color='w', markerfacecolor='red', markersize=10, label='Not Safe')]
-
-#     ax.legend(handles= elements, loc='upper left')
-
-#     plt.show()
-    # color_map = {
-    #     'Safe': 'green',
-    #     'Questionable': 'yellow',
-    #     'Not Safe': 'red'
-    # }
-
-    # # Assign colors based on the Danger Check column
-    # colors = slopeStabilityDF['Danger Check'].map(color_map)
-
-    # # Create the 3D scatter plot using Plotly
-    # fig = go.Figure(data=go.Scatter3d(
-    #     x=slopeStabilityDF['X'],
-    #     y=slopeStabilityDF['Y'],
-    #     z=slopeStabilityDF['Z'],
-    #     mode='markers',
-    #     marker=dict(
-    #         size=5,
-    #         color=colors,  # Use the color mapping
-    #         opacity=0.8
-    #     ),
-    #     text=slopeStabilityDF['Danger Check']  # Add hover info
-    # ))
-
-    # # Set plot layout
-    # fig.update_layout(
-    #     title="3D Terrain Slope Stability Safety Mapping",
-    #     scene=dict(
-    #         xaxis_title="X Axis",
-    #         yaxis_title="Y Axis",
-    #         zaxis_title="Z Axis"
-    #     ),
-    #     margin=dict(l=0, r=0, b=0, t=40)
-    # )
-
-    # # Serialize the figure to JSON
-    # fig_json = fig.to_json()
+    
+    # Debug print of stability results
+    print(f"Stability calculation results:")
+    print(f"Total points analyzed: {len(slopeStabilityDF)}")
+    print(f"Points with FoS < 1.5: {(slopeStabilityDF['Factor of Safety'] < 1.5).sum()}")
+    print(f"Factor of Safety range: {slopeStabilityDF['Factor of Safety'].min():.2f} - {slopeStabilityDF['Factor of Safety'].max():.2f}")
+    
     color_map = {
         'Safe': 'green',
         'Questionable': 'yellow',
