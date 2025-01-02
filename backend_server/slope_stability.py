@@ -212,61 +212,81 @@ def slope_angle_interpolation(friction_angle, slope_angle):
     return interpolated_stability_number
 
 def double_interpolation(friction_angle, slope_angle):
-  # This function purpose is to handle cases where the friction_angle and slope_angle are not in the taylor_chart dictionary
+    """
+    Perform double interpolation for both friction angle and slope angle.
+    Returns interpolated stability number.
+    """
+    # Get nearest friction angles
     lower_friction_angle, higher_friction_angle = get_nearest_friction_angles(friction_angle, taylor_chart)
+    if lower_friction_angle is None or higher_friction_angle is None:
+        raise ValueError(f"Cannot interpolate friction angle {friction_angle}: out of bounds")
 
+    # Get nearest slope angles
     lower_slope_angle, higher_slope_angle = get_nearest_slope_angles(lower_friction_angle, slope_angle, taylor_chart)
+    if lower_slope_angle is None or higher_slope_angle is None:
+        raise ValueError(f"Cannot interpolate slope angle {slope_angle}: out of bounds")
 
-    #lower_slope_angle stability_number
-
-    friction_angle_1 = lower_friction_angle
-    stability_number_1 = taylor_chart[lower_friction_angle][lower_slope_angle]
-
-    friction_angle_2 = higher_friction_angle
-    stability_number_2 = taylor_chart[higher_friction_angle][lower_slope_angle]
-
-
-    lower_stability_number = interpolate_stability_number(
-        lower_friction_angle, stability_number_1,
-        higher_friction_angle, stability_number_2,
+    # First interpolation: along friction angle for lower slope angle
+    stability_lower_slope = interpolate_stability_number(
+        lower_friction_angle, taylor_chart[lower_friction_angle][lower_slope_angle],
+        higher_friction_angle, taylor_chart[higher_friction_angle][lower_slope_angle],
         friction_angle
     )
 
-    #higher_slope_angle stability_number
-    stability_number_1 = taylor_chart[lower_friction_angle][higher_slope_angle]
-
-    stability_number_2 = taylor_chart[higher_friction_angle][higher_slope_angle]
-
-
-    higher_stability_number = interpolate_stability_number(
-        lower_friction_angle, stability_number_1,
-        higher_friction_angle, stability_number_2,
+    # Second interpolation: along friction angle for higher slope angle
+    stability_higher_slope = interpolate_stability_number(
+        lower_friction_angle, taylor_chart[lower_friction_angle][higher_slope_angle],
+        higher_friction_angle, taylor_chart[higher_friction_angle][higher_slope_angle],
         friction_angle
     )
 
-    #find interpolation
-
-    interpolated_stability_number = interpolate_stability_number(
-        lower_slope_angle, lower_stability_number,
-        higher_slope_angle, higher_stability_number,
+    # Final interpolation: along slope angle
+    final_stability = interpolate_stability_number(
+        lower_slope_angle, stability_lower_slope,
+        higher_slope_angle, stability_higher_slope,
         slope_angle
     )
-    return interpolated_stability_number
+    
+    return final_stability
 
 def StabilityIteration(slopeStabilityDF):
     def get_stability_number(row):
-        slope_angle, friction_angle = row['Slope Angle'], row['Friction Angle']
-        if friction_angle in taylor_chart:
-            if slope_angle in taylor_chart[friction_angle]:
-                return taylor_chart[friction_angle][slope_angle]
-            else:
-                return slope_angle_interpolation(friction_angle, slope_angle)
-        else:
-            if slope_angle in taylor_chart[5]:
-                return friction_angle_interpolation(friction_angle, slope_angle)
-            else:
-                return double_interpolation(friction_angle, slope_angle)
+        try:
+            slope_angle, friction_angle = row['Slope Angle'], row['Friction Angle']
+            
+            # Input validation
+            if not (0 <= slope_angle <= 90) or not (0 <= friction_angle <= 30):
+                raise ValueError(f"Invalid input: slope_angle={slope_angle}, friction_angle={friction_angle}")
+            
+            # Check if exact values exist
+            if friction_angle in taylor_chart and slope_angle in taylor_chart[friction_angle]:
+                stability_number = taylor_chart[friction_angle][slope_angle]
+                if stability_number <= 0.0001:  # Handle undefined values
+                    raise ValueError("Stability number undefined for these parameters")
+                return stability_number
+                
+            # Need interpolation
+            try:
+                if friction_angle in taylor_chart:
+                    return slope_angle_interpolation(friction_angle, slope_angle)
+                else:
+                    return double_interpolation(friction_angle, slope_angle)
+            except ValueError as e:
+                print(f"Interpolation error for slope={slope_angle}, friction={friction_angle}: {str(e)}")
+                return np.nan
+                
+        except Exception as e:
+            print(f"Error calculating stability number: {str(e)}")
+            return np.nan
+
     slopeStabilityDF['Stability Number'] = slopeStabilityDF.apply(get_stability_number, axis=1)
+    
+    # Handle any NaN values that resulted from errors
+    nan_count = slopeStabilityDF['Stability Number'].isna().sum()
+    if nan_count > 0:
+        print(f"Warning: {nan_count} points could not be calculated and will be excluded")
+        slopeStabilityDF = slopeStabilityDF.dropna(subset=['Stability Number'])
+    
     return slopeStabilityDF
 
 def calculateCriticalHeight(slopeStabilityDF):
@@ -276,19 +296,33 @@ def calculateCriticalHeight(slopeStabilityDF):
     )
     return slopeStabilityDF
 def calculateFactorofSafety(slopeStabilityDF):
-    # Vectorized calculation of Factor of Safety
-    slopeStabilityDF['Factor of Safety'] = (
-        slopeStabilityDF['Critical Height'] / slopeStabilityDF['Height of slope']
+    # Handle division by zero and negative values
+    mask = (slopeStabilityDF['Height of slope'] > 0) & (slopeStabilityDF['Stability Number'] > 0)
+    
+    # Initialize Factor of Safety column with NaN
+    slopeStabilityDF['Factor of Safety'] = np.nan
+    
+    # Calculate only for valid entries
+    slopeStabilityDF.loc[mask, 'Factor of Safety'] = (
+        slopeStabilityDF.loc[mask, 'Critical Height'] / 
+        slopeStabilityDF.loc[mask, 'Height of slope']
     )
     
-    # Vectorized assignment of Danger Check based on Factor of Safety
+    # More detailed safety classification
     conditions = [
+        slopeStabilityDF['Factor of Safety'].isna(),
         slopeStabilityDF['Factor of Safety'] < 1,
-        (slopeStabilityDF['Factor of Safety'] >= 1) & (slopeStabilityDF['Factor of Safety'] < 1.5),
+        (slopeStabilityDF['Factor of Safety'] >= 1) & (slopeStabilityDF['Factor of Safety'] < 1.25),
+        (slopeStabilityDF['Factor of Safety'] >= 1.25) & (slopeStabilityDF['Factor of Safety'] < 1.5),
         slopeStabilityDF['Factor of Safety'] >= 1.5
     ]
-    choices = ['Not Safe', 'Questionable', 'Safe']
+    choices = ['Invalid', 'Not Safe', 'High Risk', 'Questionable', 'Safe']
     slopeStabilityDF['Danger Check'] = np.select(conditions, choices, default='Unknown')
+    
+    # Log any invalid calculations
+    invalid_count = (slopeStabilityDF['Danger Check'] == 'Invalid').sum()
+    if invalid_count > 0:
+        print(f"Warning: {invalid_count} points have invalid safety factors")
     
     return slopeStabilityDF
 
