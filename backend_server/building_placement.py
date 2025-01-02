@@ -299,7 +299,7 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
     
     # Prepare arguments for parallel processing
     args = [
-        (idx, placement, gdf, spatial_index, extension_percentage, z_min, z_max, z_step)
+        (idx, placement, gdf, spatial_index, extension_percentage * 2.0, z_min, z_max, z_step)  # Doubled extension percentage
         for idx, placement in enumerate(building_positions)
     ]
     
@@ -313,11 +313,11 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
             placement, data = result
             initial_results[placement] = data
     
-    # Sort placements by initial cost and get top 10
+    # Sort placements by initial cost and get top 10 highest cost
     global top_10_placements
     top_10_placements = sorted(
-        initial_results.items(), 
-        key=lambda x: x[1]['min_cost']
+        initial_results.items(),
+        key=lambda x: x[1]['min_cost'],
     )[:10]
     
     # Final results dictionary
@@ -337,25 +337,37 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
         relevant_points_df = initial_data['relevant_points']
         all_cut_fill_by_z = initial_data['all_cut_fill_by_z']
         
+        logging.info(f"Building {rank} analysis:")
+        logging.info(f"Optimal elevation: {min_cost_z:.2f}")
+        logging.info(f"Number of points in analysis: {len(relevant_points_df)}")
+        
         # Vectorized slope stability analysis
         slope_data = prepare_slope_data(relevant_points_df, min_cost_z)
         stability_results, _ = slope_stability_calculation(slope_data)
+        print("STABILITY RESULTS: ", stability_results)
         
-        # Identify unstable points
+        # Identify unstable points with more detailed criteria
         failed_stability = stability_results['Factor of Safety'] < 1.5
+        potentially_unstable = stability_results['Slope Angle'] > 15  # Flag steeper slopes
+        
         if failed_stability.any():
-            failed_points = relevant_points_df[failed_stability].copy()
-            failed_points = failed_points.assign(
-                Height_Difference=abs(min_cost_z - failed_points['z (existing)']),
-                Factor_of_Safety=stability_results['Factor of Safety'][failed_stability],
-                Building_Rank=rank,
-                Proposed_Z=min_cost_z
-            )
-            # Add to all unstable points
-            all_unstable_points.append(failed_points[['x', 'y', 'z (existing)', 'Height_Difference', 'Factor_of_Safety', 'Building_Rank', 'Proposed_Z']])
-            
-            # Log the number of unstable points found
-            logging.info(f"Found {len(failed_points)} unstable points for building {rank}")
+            failed_points = relevant_points_df[failed_stability & potentially_unstable].copy()
+            if not failed_points.empty:
+                failed_points = failed_points.assign(
+                    Height_Difference=abs(min_cost_z - failed_points['z (existing)']),
+                    Factor_of_Safety=stability_results['Factor of Safety'][failed_stability & potentially_unstable],
+                    Building_Rank=rank,
+                    Proposed_Z=min_cost_z,
+                    Slope_Angle=stability_results['Slope Angle'][failed_stability & potentially_unstable]
+                )
+                # Add to all unstable points
+                all_unstable_points.append(failed_points[['x', 'y', 'z (existing)', 'Height_Difference', 
+                                                        'Factor_of_Safety', 'Building_Rank', 'Proposed_Z', 
+                                                        'Slope_Angle']])
+                
+                logging.info(f"Found {len(failed_points)} unstable points for building {rank}")
+                logging.info(f"Average Factor of Safety: {failed_points['Factor_of_Safety'].mean():.2f}")
+                logging.info(f"Average Slope Angle: {failed_points['Slope_Angle'].mean():.2f}°")
         
         # Store final results without wall calculations
         optimum_results[placement] = {
@@ -470,23 +482,29 @@ def calculate_rotation(polygon):
 # print(cut_fill_df)
 def plot_3d_terrain_plotly(surface_df, best_placement, best_z, title='Site Terrain with Optimal Building Placement'):
     """
-    Create an interactive 3D plot using Plotly instead of Matplotlib
+    Create an interactive 3D plot using Plotly with enhanced visualization
+    similar to the grf.py implementation
     """
-    # Create the terrain scatter plot
+    # Create the terrain scatter plot with color gradient based on elevation
     terrain = go.Scatter3d(
         x=surface_df['x'],
         y=surface_df['y'],
         z=surface_df['z (existing)'],
         mode='markers',
         marker=dict(
-            size=3,
-            color='blue',
-            opacity=0.6
+            size=2,
+            color=surface_df['z (existing)'],  # Color points based on elevation
+            colorscale='earth',  # Use earth colorscale for terrain-like appearance
+            opacity=0.8,
+            colorbar=dict(
+                title='Ground Elevation',
+                tickformat='.1f'
+            )
         ),
         name='Terrain'
     )
 
-    # Create the building footprint
+    # Create the building footprint with improved visibility
     x, y = best_placement.exterior.xy
     building = go.Scatter3d(
         x=list(x),
@@ -495,32 +513,86 @@ def plot_3d_terrain_plotly(surface_df, best_placement, best_z, title='Site Terra
         mode='lines',
         line=dict(
             color='red',
-            width=4
+            width=6,  # Increased width for better visibility
+            dash='solid'
         ),
         name='Best Building Position'
     )
 
-    # Create the figure
-    fig = go.Figure(data=[terrain, building])
+    # Add building vertices as points for better visualization
+    building_vertices = go.Scatter3d(
+        x=list(x),
+        y=list(y),
+        z=[best_z] * len(x),
+        mode='markers',
+        marker=dict(
+            size=6,
+            color='red',
+            symbol='circle',
+            opacity=1
+        ),
+        name='Building Corners'
+    )
 
-    # Update the layout
+    # Create the figure with all components
+    fig = go.Figure(data=[terrain, building, building_vertices])
+
+    # Update the layout with enhanced settings
     fig.update_layout(
-        title=title,
+        title=dict(
+            text=title,
+            y=0.95,
+            x=0.5,
+            xanchor='center',
+            yanchor='top',
+            font=dict(size=20)
+        ),
         scene=dict(
-            xaxis_title='X',
-            yaxis_title='Y',
-            zaxis_title='Z',
+            xaxis=dict(
+                title='X',
+                gridcolor='lightgray',
+                showgrid=True,
+                zeroline=False
+            ),
+            yaxis=dict(
+                title='Y',
+                gridcolor='lightgray',
+                showgrid=True,
+                zeroline=False
+            ),
+            zaxis=dict(
+                title='Z',
+                gridcolor='lightgray',
+                showgrid=True,
+                zeroline=False
+            ),
             camera=dict(
-                eye=dict(x=1.5, y=1.5, z=1.5)
-            )
+                eye=dict(x=1.5, y=1.5, z=1.5),
+                up=dict(x=0, y=0, z=1)
+            ),
+            aspectmode='data'  # Preserve the actual scale ratios
         ),
         showlegend=True,
         legend=dict(
             yanchor="top",
             y=0.99,
             xanchor="left",
-            x=0.01
-        )
+            x=0.01,
+            bgcolor='rgba(255, 255, 255, 0.8)'  # Semi-transparent background
+        ),
+        margin=dict(l=0, r=0, b=0, t=30),
+        paper_bgcolor='white',
+        plot_bgcolor='white'
+    )
+
+    # Add annotations for elevation information
+    fig.add_annotation(
+        text=f"Building Elevation: {best_z:.2f}",
+        xref="paper", yref="paper",
+        x=0.02, y=0.85,
+        showarrow=False,
+        font=dict(size=12),
+        bgcolor='rgba(255, 255, 255, 0.8)'
     )
 
     return fig
@@ -612,7 +684,6 @@ def plot_all_stability_results_plotly(surface_df, unstable_points_df, optimum_re
     Create a multi-plot visualization showing only unstable points for all top 10 building placements
     """
     logging.info(f"Starting to plot stability results. Unstable points shape: {unstable_points_df.shape}")
-    
     # Create subplots: 2 rows, 5 columns
     fig = make_subplots(
         rows=2, cols=5,
@@ -729,10 +800,16 @@ def main():
     logging.info("Starting RunOpt optimization process")
     
     # Example file path for testing
-    excel_file_path = '/Users/ronballer/Desktop/RunOpt/RunoptCode/InputFile NEW.xlsx'
+    # excel_file_path = '/Users/ronballer/Desktop/RunOpt/RunoptCode/InputFile NEW.xlsx'
+    excel_file_path = '/Users/ronballer/Desktop/RunOpt/RunoptCode/SurfaceDF_export.xlsx'
+
     
     # Read data from Excel file
-    surface_df = read_excel_to_dataframe(excel_file_path)
+    # surface_df = read_excel_to_dataframe(excel_file_path)
+    csv_file_path = '/Users/ronballer/Desktop/RunOpt/BackEnd_Deploy/site_survey_data_250.0_27_feet.csv'
+    surface_df = pd.read_csv(csv_file_path)
+    surface_df.columns = surface_df.columns.str.lower()
+
     logging.info(f"Columns in surface_df: {surface_df.columns.tolist()}")
     logging.info("Data loaded successfully from Excel")
     
@@ -740,9 +817,9 @@ def main():
     logging.info("Elevation Data Statistics:")
     logging.info(f"\n{surface_df['z (existing)'].describe()}")
     
-    # Create example building dimensions
-    building_length = 30
-    building_width = 30
+    # Create example building dimensions (feet)
+    building_length = 75
+    building_width = 75
     building = create_building(length=building_length, width=building_width)
     print(f"\nCreated building with dimensions: {building_length}m x {building_width}m")
 
@@ -754,7 +831,7 @@ def main():
     print(site_polygon)
 
     # Create confined region (50% of total site area)
-    confined_region = create_confined_region(site_polygon, percentage=50)
+    confined_region = create_confined_region(site_polygon, percentage=80)
     print("Confined region created for building placement")
 
     # Find valid placements (increase steps for more granular results)
@@ -764,8 +841,8 @@ def main():
     # Calculate optimum cut and fill for each valid placement
     z_min = surface_df['z (existing)'].min()
     z_max = surface_df['z (existing)'].max()
-    z_step = 0.5  # 0.5m intervals for elevation analysis
-    extension_percentage = 0.40  # Extend building region by 40%
+    z_step = 0.5  # Smaller step for more precise elevation analysis
+    extension_percentage = 2.0  # 200% extension to capture more surrounding terrain
 
     print("\nCalculating optimum cut and fill volumes...")
     optimum_results, unstable_points_df = calculate_optimum_cut_fill(
@@ -919,19 +996,48 @@ def calculate_grid_cell_area(relevant_points_gdf):
 
 def prepare_slope_data(relevant_points_df, min_cost_z):
     """
-    Prepare slope data in a vectorized manner.
+    Prepare slope data with improved slope angle calculations.
     """
+    # Calculate height differences
     height_diff = abs(min_cost_z - relevant_points_df['z (existing)'])
+    
+    # Create a grid of points for better slope calculation
+    x = relevant_points_df['x'].values
+    y = relevant_points_df['y'].values
+    z = relevant_points_df['z (existing)'].values
+    
+    # Calculate slopes using numpy gradient with better handling of grid data
+    dx = np.gradient(x)
+    dy = np.gradient(y)
+    dz = np.gradient(z)
+    
+    # Calculate slope angles using the steepest descent method
+    # slope = rise/run = dz/√(dx² + dy²)
+    run = np.sqrt(dx**2 + dy**2)
+    slope_angles = np.degrees(np.arctan(np.abs(dz) / (run + 1e-10)))  # Added small value to prevent division by zero
+    
+    # Create DataFrame with calculated slopes and more conservative soil parameters
     slope_data = pd.DataFrame({
         'X': relevant_points_df['x'],
         'Y': relevant_points_df['y'],
         'Z': relevant_points_df['z (existing)'],
-        'Slope Angle': 26.57,  # 2:1 slope
+        'Slope Angle': slope_angles,
         'Height of slope': height_diff,
-        'Friction Angle': 30,  # Assumed soil properties
-        'Cohesion': 25,
-        'Unit Weight': 20
+        'Friction Angle': 0,  # More conservative friction angle
+        'Cohesion': 20,       # More conservative cohesion value
+        'Unit Weight': 18     # Typical soil unit weight
     })
+    
+    # Add debugging information
+    logging.info(f"Slope Analysis Statistics:")
+    logging.info(f"Min Slope: {slope_angles.min():.2f}°")
+    logging.info(f"Max Slope: {slope_angles.max():.2f}°")
+    logging.info(f"Mean Slope: {slope_angles.mean():.2f}°")
+    logging.info(f"Height Difference Stats:")
+    logging.info(f"Min Height: {height_diff.min():.2f}")
+    logging.info(f"Max Height: {height_diff.max():.2f}")
+    logging.info(f"Mean Height: {height_diff.mean():.2f}")
+    
     return slope_data
 
 # Add error handling for required columns
