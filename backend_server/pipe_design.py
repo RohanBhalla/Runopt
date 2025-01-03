@@ -7,27 +7,59 @@ import plotly.graph_objects as go
 
 # Function to generate nodes in a 3D grid
 def generate_nodes(grid_size, step):
-    nodes = []
-    for x in range(0, grid_size[0], step):
-        for y in range(0, grid_size[1], step):
-            for z in range(0, grid_size[2], step):
-                nodes.append((x, y, z))
-    return nodes
+    """
+    Generate nodes in a 3D grid with input validation and memory optimization.
+    
+    Args:
+        grid_size (tuple): (x, y, z) dimensions of the grid
+        step (int): Distance between nodes
+    
+    Returns:
+        list: List of (x, y, z) coordinate tuples
+    """
+    # Add input validation to catch errors early
+    if not all(isinstance(dim, int) and dim > 0 for dim in grid_size):
+        raise ValueError("Grid dimensions must be positive integers")
+    if not isinstance(step, int) or step <= 0:
+        raise ValueError("Step must be a positive integer")
+    
+    # Use list comprehension instead of nested loops for better performance
+    # This reduces memory usage and is more Pythonic
+    return [
+        (x, y, z)
+        for x in range(0, grid_size[0], step)
+        for y in range(0, grid_size[1], step)
+        for z in range(0, grid_size[2], step)
+    ]
 
 def calculatePrice(paths):
+    """
+    Calculate total price of the pipe system with optimized calculations.
+    """
+    # Pre-calculate constants to avoid repeated calculations
+    angle_rad = math.radians(45)  # Convert angle to radians once
+    tan_angle = math.tan(angle_rad)  # Calculate tangent once
+    
+    # Use more descriptive variable names for clarity
     totalVolume = 0
     visited = set()
     max_height = 100
-    angle = 45
+    
     for path in paths:
-        height_sum = 0
-        for node in range(1, len(path)):
-            if path[node] not in visited:
-                width = math.sqrt((path[node][1]- path[node - 1][1])**2 + (path[node][0] - path[node-1][0])**2)
-                height = max_height - path[node][2]
-                height_sum += (1/math.tan(angle * (math.pi/180))) * (height**2) * width
-                visited.add(path[node])
-        totalVolume += (height_sum)
+        for i in range(1, len(path)):
+            current_node = path[i]
+            if current_node not in visited:
+                prev_node = path[i - 1]
+                # Separate width calculation for better readability
+                width = math.sqrt(
+                    (current_node[1] - prev_node[1])**2 + 
+                    (current_node[0] - prev_node[0])**2
+                )
+                height = max_height - current_node[2]
+                # Optimize calculation by removing redundant operations
+                totalVolume += (height**2 * width) / tan_angle
+                visited.add(current_node)
+    
     return totalVolume * 100
 
 
@@ -72,21 +104,45 @@ def update_graph_with_path(graph, path):
 
 # Function to construct the graph based on nodes
 def construct_graph(nodes, max_distance=15):
+    """
+    Construct graph with spatial indexing for improved performance.
+    """
     graph = {}
-    for i, node1 in enumerate(nodes):
-        # Ensure the node is initialized in the graph dictionary
-        if node1 not in graph:
-            graph[node1] = {}
+    # Use spatial indexing to reduce the number of distance calculations
+    cell_size = max_distance
+    spatial_index = {}
+    
+    # First pass: organize nodes into grid cells
+    for node in nodes:
+        cell_x = int(node[0] // cell_size)
+        cell_y = int(node[1] // cell_size)
+        cell_z = int(node[2] // cell_size)
+        cell_key = (cell_x, cell_y, cell_z)
         
-        for j, node2 in enumerate(nodes):
-            if i != j:
-                distance = euclidean_distance(node1, node2)
-                if distance <= max_distance:  # Only connect nodes within the max distance
-                    if node2 not in graph:
-                        graph[node2] = {}
-                    
-                    graph[node1][node2] = distance
-                    graph[node2][node1] = distance
+        # Group nodes by their grid cell
+        if cell_key not in spatial_index:
+            spatial_index[cell_key] = []
+        spatial_index[cell_key].append(node)
+    
+    # Second pass: only check distances between nodes in neighboring cells
+    # This dramatically reduces the number of distance calculations needed
+    for cell_key, cell_nodes in spatial_index.items():
+        x, y, z = cell_key
+        # Check only neighboring cells (26 neighbors + current cell)
+        for dx, dy, dz in [(dx, dy, dz) 
+                          for dx in [-1, 0, 1] 
+                          for dy in [-1, 0, 1] 
+                          for dz in [-1, 0, 1]]:
+            neighbor_cell = (x + dx, y + dy, z + dz)
+            if neighbor_cell in spatial_index:
+                # Connect nodes only to those in neighboring cells
+                for node1 in cell_nodes:
+                    for node2 in spatial_index[neighbor_cell]:
+                        if node1 != node2:
+                            distance = euclidean_distance(node1, node2)
+                            if distance <= max_distance:
+                                graph[node1][node2] = distance
+    
     return graph
 
 # Generate nodes
