@@ -1,0 +1,8 @@
+Site_Dimensions: 100 ft x 250 ft
+Survey_Grid_Resolution: 100x100 points
+Elevation_Range: 0.0-12.5 ft
+Average_Slope: 4.04%
+Base_Elevation: 0.0 ft
+Survey_Type: Synthetic Ground Survey Data
+Coordinate_System: Local Grid (feet)
+Vertical_Datum: Local Benchmark

@@ -77,9 +77,9 @@ Z_normalized += slope_pattern
 # STEP 3: Create Site Data with Metadata
 # ----------------------------------------------------------------------------
 df_site = pd.DataFrame({
-    'Station_X_ft': X.flatten(),
-    'Station_Y_ft': Y.flatten(),
-    'Ground_Elevation_ft': Z_normalized.flatten()
+    'X': X.flatten(),
+    'Y': Y.flatten(),
+    'Z (Synthetic)': Z_normalized.flatten()
 })
 
 # Add metadata

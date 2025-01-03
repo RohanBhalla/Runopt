@@ -233,6 +233,9 @@ def process_single_placement(args):
     idx, placement, gdf, spatial_index, extension_percentage, z_min, z_max, z_step = args
     logging.info(f"\nProcessing building {idx + 1}...")
     
+    # Initialize list for unstable points
+    all_unstable_points = []
+    
     extended_region = extend_building_region(placement, extension_percentage)
     relevant_points_gdf = find_points_in_extended_region(gdf, extended_region, spatial_index)
     
@@ -252,18 +255,39 @@ def process_single_placement(args):
     min_cost_z = proposed_zs[min_cost_idx]
     min_cost = cut_fill_results['total_cost'][min_cost_idx]
     
-    logging.info(f"Building {idx + 1} Results:")
-    logging.info(f"Best Z = {min_cost_z:.2f}")
-    logging.info(f"Cut Volume = {cut_fill_results['cut_volume'][min_cost_idx]:.2f}")
-    logging.info(f"Fill Volume = {cut_fill_results['fill_volume'][min_cost_idx]:.2f}")
-    logging.info(f"Total Cost = {min_cost:.2f}")
+    # Prepare slope data excluding building footprint
+    slope_data = prepare_slope_data(relevant_points_gdf, min_cost_z, placement)
     
+    if not slope_data.empty:
+        stability_results, _ = slope_stability_calculation(slope_data)
+        
+        # Process stability results
+        failed_stability = stability_results['Factor of Safety'] < 1.5
+        potentially_unstable = stability_results['Slope Angle'] > 15
+        
+        if failed_stability.any():
+            failed_points = slope_data[failed_stability & potentially_unstable].copy()
+            if not failed_points.empty:
+                failed_points = failed_points.assign(
+                    Height_Difference=abs(min_cost_z - failed_points['z (existing)']),
+                    Factor_of_Safety=stability_results['Factor of Safety'][failed_stability & potentially_unstable],
+                    Building_Rank=idx + 1,
+                    Proposed_Z=min_cost_z,
+                    Slope_Angle=stability_results['Slope Angle'][failed_stability & potentially_unstable]
+                )
+                # Add to unstable points
+                all_unstable_points.append(failed_points[['x', 'y', 'z (existing)', 'Height_Difference', 
+                                                        'Factor_of_Safety', 'Building_Rank', 'Proposed_Z', 
+                                                        'Slope_Angle']])
+    
+    # Return results with correct indexing for cut and fill volumes
     return (placement, {
         'best_z': min_cost_z,
         'min_cost': min_cost,
         'cut_volume': cut_fill_results['cut_volume'][min_cost_idx],
         'fill_volume': cut_fill_results['fill_volume'][min_cost_idx],
         'relevant_points': relevant_points_gdf,
+        'unstable_points': pd.concat(all_unstable_points) if all_unstable_points else pd.DataFrame(),
         'all_cut_fill_by_z': {
             z: {
                 'cut_volume': cv,
@@ -307,11 +331,19 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
     with Pool(cpu_count()) as pool:
         results = pool.map(process_single_placement, args)
     
-    # Filter out None results and populate initial_results
+    # Initialize list to store all unstable points
+    all_unstable_points = []
+    
+    # Process results and collect unstable points
     for result in results:
         if result:
             placement, data = result
             initial_results[placement] = data
+            if 'unstable_points' in data and not data['unstable_points'].empty:
+                all_unstable_points.append(data['unstable_points'])
+    
+    # Create final unstable points DataFrame
+    unstable_points_df = pd.concat(all_unstable_points) if all_unstable_points else pd.DataFrame()
     
     # Sort placements by initial cost and get top 10 highest cost
     global top_10_placements
@@ -342,7 +374,7 @@ def calculate_optimum_cut_fill(building_positions, surface_df, extension_percent
         logging.info(f"Number of points in analysis: {len(relevant_points_df)}")
         
         # Vectorized slope stability analysis
-        slope_data = prepare_slope_data(relevant_points_df, min_cost_z)
+        slope_data = prepare_slope_data(relevant_points_df, min_cost_z, placement)
         stability_results, _ = slope_stability_calculation(slope_data)
         print("STABILITY RESULTS: ", stability_results)
         
@@ -806,7 +838,7 @@ def main():
     
     # Read data from Excel file
     # surface_df = read_excel_to_dataframe(excel_file_path)
-    csv_file_path = '/Users/ronballer/Desktop/RunOpt/BackEnd_Deploy/site_survey_data_250.0_27_feet.csv'
+    csv_file_path = '/Users/akshat/Documents/WORK/Github/Runopt/site_survey_data_100.0_12_feet.csv'
     surface_df = pd.read_csv(csv_file_path)
     surface_df.columns = surface_df.columns.str.lower()
 
@@ -994,17 +1026,37 @@ def calculate_grid_cell_area(relevant_points_gdf):
     y_range = relevant_points_gdf['y'].max() - relevant_points_gdf['y'].min()
     return (x_range * y_range) / len(relevant_points_gdf)
 
-def prepare_slope_data(relevant_points_df, min_cost_z):
+def prepare_slope_data(relevant_points_df, min_cost_z, building_placement):
     """
-    Prepare slope data with improved slope angle calculations.
+    Prepare slope data with improved slope angle calculations, excluding points under building.
     """
+    # Convert building placement to shapely geometry if not already
+    if not hasattr(building_placement, 'contains'):
+        building_placement = Polygon(building_placement)
+    
+    # Create points geometry for filtering
+    points = [Point(x, y) for x, y in zip(relevant_points_df['x'], relevant_points_df['y'])]
+    
+    # Create mask for points outside building footprint
+    outside_building = [not building_placement.contains(point) for point in points]
+    
+    # Filter points to only include those outside building footprint
+    filtered_df = relevant_points_df[outside_building].copy()
+    
+    logging.info(f"Total points: {len(relevant_points_df)}")
+    logging.info(f"Points outside building: {len(filtered_df)}")
+    
+    if len(filtered_df) == 0:
+        logging.warning("No points found outside building footprint!")
+        return pd.DataFrame()  # Return empty DataFrame if no valid points
+    
     # Calculate height differences
-    height_diff = abs(min_cost_z - relevant_points_df['z (existing)'])
+    height_diff = abs(min_cost_z - filtered_df['z (existing)'])
     
     # Create a grid of points for better slope calculation
-    x = relevant_points_df['x'].values
-    y = relevant_points_df['y'].values
-    z = relevant_points_df['z (existing)'].values
+    x = filtered_df['x'].values
+    y = filtered_df['y'].values
+    z = filtered_df['z (existing)'].values
     
     # Calculate slopes using numpy gradient with better handling of grid data
     dx = np.gradient(x)
@@ -1012,31 +1064,26 @@ def prepare_slope_data(relevant_points_df, min_cost_z):
     dz = np.gradient(z)
     
     # Calculate slope angles using the steepest descent method
-    # slope = rise/run = dz/√(dx² + dy²)
     run = np.sqrt(dx**2 + dy**2)
-    slope_angles = np.degrees(np.arctan(np.abs(dz) / (run + 1e-10)))  # Added small value to prevent division by zero
+    slope_angles = np.degrees(np.arctan(np.abs(dz) / (run + 1e-10)))
     
-    # Create DataFrame with calculated slopes and more conservative soil parameters
+    # Create DataFrame with calculated slopes and soil parameters
     slope_data = pd.DataFrame({
-        'X': relevant_points_df['x'],
-        'Y': relevant_points_df['y'],
-        'Z': relevant_points_df['z (existing)'],
+        'X': filtered_df['x'],
+        'Y': filtered_df['y'],
+        'Z': filtered_df['z (existing)'],
         'Slope Angle': slope_angles,
         'Height of slope': height_diff,
-        'Friction Angle': 0,  # More conservative friction angle
-        'Cohesion': 20,       # More conservative cohesion value
-        'Unit Weight': 18     # Typical soil unit weight
+        'Friction Angle': 0,
+        'Cohesion': 20,
+        'Unit Weight': 18
     })
     
     # Add debugging information
-    logging.info(f"Slope Analysis Statistics:")
+    logging.info(f"Slope Analysis Statistics (excluding building footprint):")
     logging.info(f"Min Slope: {slope_angles.min():.2f}°")
     logging.info(f"Max Slope: {slope_angles.max():.2f}°")
     logging.info(f"Mean Slope: {slope_angles.mean():.2f}°")
-    logging.info(f"Height Difference Stats:")
-    logging.info(f"Min Height: {height_diff.min():.2f}")
-    logging.info(f"Max Height: {height_diff.max():.2f}")
-    logging.info(f"Mean Height: {height_diff.mean():.2f}")
     
     return slope_data
 
